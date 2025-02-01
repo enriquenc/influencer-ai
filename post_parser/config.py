@@ -7,10 +7,18 @@ class TelegramConfig(TypedDict):
     api_id: str
     api_hash: str
 
+class OpenAIConfig(TypedDict):
+    api_key: str
+    model: str
+    temperature: float
+
 class Config(TypedDict):
     telegram: TelegramConfig
     max_messages_per_parse: int  # e.g., 1000
     debug_mode: bool
+    debug_channel: str
+    openai: OpenAIConfig
+    max_posts_per_batch: int
 
 DEFAULT_CONFIG: Config = {
     "telegram": {
@@ -19,7 +27,14 @@ DEFAULT_CONFIG: Config = {
         "api_hash": ""    # Will be overridden by actual hash
     },
     "max_messages_per_parse": 1000,
-    "debug_mode": False
+    "debug_mode": False,
+    "debug_channel": "UkraineNow",  # Default debug channel
+    "openai": {
+        "api_key": "",
+        "model": "gpt-3.5-turbo",
+        "temperature": 0.7
+    },
+    "max_posts_per_batch": 10
 }
 
 def validate_config(config: dict) -> tuple[bool, Optional[str]]:
@@ -50,6 +65,26 @@ def validate_config(config: dict) -> tuple[bool, Optional[str]]:
 
         if not isinstance(config.get("debug_mode", False), bool):
             return False, "debug_mode must be a boolean"
+
+        if not isinstance(config.get("debug_channel", "UkraineNow"), str):
+            return False, "debug_channel must be a string"
+
+        openai_config = config.get("openai", {})
+        if not isinstance(openai_config, dict):
+            return False, "openai must be a dictionary"
+
+        required_openai_fields = {"api_key", "model", "temperature"}
+        missing_fields = required_openai_fields - set(openai_config.keys())
+        if missing_fields:
+            return False, f"Missing required OpenAI fields: {missing_fields}"
+
+        # Check for empty credentials in OpenAI
+        for field in required_openai_fields:
+            if not openai_config.get(field):
+                return False, f"OpenAI {field} cannot be empty"
+
+        if not isinstance(config.get("max_posts_per_batch", 10), int):
+            return False, "max_posts_per_batch must be an integer"
 
         return True, None
 
