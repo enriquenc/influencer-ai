@@ -1,6 +1,7 @@
 from personality_analyzer.character_template import CharacterAnalyzer
 from personality_analyzer.config import load_config
 import json
+import sys
 
 
 # This is a test file to test the analyzer
@@ -12,9 +13,23 @@ def test_analyzer():
         # Load configuration
         config = load_config()
 
-        # Initialize analyzer
-        api_key = config['openai']['api_key']
-        analyzer = CharacterAnalyzer(api_key=api_key)
+        # Verify API key exists
+        if 'openai' not in config or 'api_key' not in config['openai']:
+            print("Error: Missing 'openai.api_key' in config.json")
+            return False
+
+        if not config['openai']['api_key']:
+            print("Error: OpenAI API key is empty in config.json")
+            return False
+
+        print(f"Config loaded successfully. API key {'is' if config['openai']['api_key'] else 'is not'} present.")
+
+        # Initialize analyzer with all config parameters
+        analyzer = CharacterAnalyzer(
+            api_key=config['openai']['api_key'],
+            model=config['openai']['model'],
+            temperature=config['openai']['temperature']
+        )
 
         # Example telegram posts
         posts = [
@@ -26,7 +41,12 @@ def test_analyzer():
         ]
 
         print("Analyzing posts...")
-        personality = analyzer.analyze_posts(posts)
+        try:
+            personality = analyzer.analyze_posts(posts)
+        except Exception as e:
+            print(f"Error during API call: {str(e)}")
+            print(f"Error type: {type(e).__name__}")
+            return False
 
         # Print results in a formatted way
         print("\n=== Personality Analysis Results ===")
@@ -56,12 +76,18 @@ def test_analyzer():
         return True
 
     except FileNotFoundError as e:
-        print(f"Error: {e}")
+        print(f"Error: Config file not found - {e}")
         print("Please ensure config.json exists in the root directory with valid OpenAI API key")
         return False
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in config file - {e}")
+        return False
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"An unexpected error occurred: {e}")
+        print(f"Error type: {type(e).__name__}")
         return False
 
 if __name__ == "__main__":
-    test_analyzer()
+    success = test_analyzer()
+    if not success:
+        sys.exit(1)

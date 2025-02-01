@@ -28,9 +28,11 @@ class Personality:
 class CharacterAnalyzer:
     """Class for analyzing text content and generating personality profiles"""
 
-    def __init__(self, api_key: str):
-        """Initialize with OpenAI API key"""
+    def __init__(self, api_key: str, model: str = "gpt-3.5-turbo", temperature: float = 0.7):
+        """Initialize with OpenAI API key and optional parameters"""
         self.client = OpenAI(api_key=api_key)
+        self.model = model
+        self.temperature = temperature
 
     def analyze_posts(self, posts: List[str]) -> Personality:
         """
@@ -59,12 +61,12 @@ class CharacterAnalyzer:
 
         # Get analysis from GPT using new API format
         response = self.client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=self.model,
             messages=[
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.7
+            temperature=self.temperature
         )
 
         # Parse response
