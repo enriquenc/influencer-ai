@@ -3,28 +3,29 @@ import requests
 import json
 from datetime import datetime
 import time
+from onchain_parser.config import config
 
-# Подключение к Base Sepolia
-WEB3_PROVIDER = "https://base-mainnet.g.alchemy.com/v2/{api_key}"
-web3 = Web3(Web3.HTTPProvider(WEB3_PROVIDER))
+# Connection to Base Mainnet using config
+web3 = Web3(Web3.HTTPProvider(config.provider_url))
 
-# Адрес для отслеживания
-WALLET_ADDRESS = "0x939d8f09e002EaF17E10acaB804164becE5B8e3c"
+# Address to monitor from config
+WALLET_ADDRESS = config.wallet_address
+IGNORED_CONTRACTS = config.ignored_contracts
 
 def get_token_price(token_address):
-    """Получение цены токена с Dexscreener"""
-    # Список стейблкоинов
+    """Get token price from Dexscreener"""
+    # List of stablecoins
     stablecoins = {
         '0x036CbD53842c5426634e7929541eC2318f3dCF7e'.lower(): 1.0,  # USDC Base
         '0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb'.lower(): 1.0,  # USDT Base
-        # Добавьте другие адреса USDC/USDT если нужно
+        # Add other USDC/USDT addresses if needed
     }
-    
-    # Проверяем, является ли токен стейблкоином
+
+    # Check if token is a stablecoin
     if token_address.lower() in stablecoins:
         return stablecoins[token_address.lower()]
-        
-    # Если нет, получаем цену с Dexscreener
+
+    # If not, get price from Dexscreener
     url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
     try:
         response = requests.get(url)
@@ -33,13 +34,13 @@ def get_token_price(token_address):
             return float(data['pairs'][0]['priceUsd'])
         return None
     except Exception as e:
-        print(f"Ошибка при получении цены: {e}")
+        print(f"Error getting price: {e}")
         return None
 
 def get_token_info(token_address):
-    """Получение информации о токене"""
+    """Get token information"""
     try:
-        # Базовый ERC20 ABI для получения символа токена
+        # Basic ERC20 ABI to get token symbol
         erc20_abi = [
             {
                 "constant": True,
@@ -65,39 +66,50 @@ def get_token_info(token_address):
         }
 
 def analyze_transaction(transaction, tx_receipt):
-    """Детальный анализ транзакции"""
+    """Detailed transaction analysis"""
     try:
-        # Расчет стоимости газа
+        # Calculate gas cost
         gas_cost_wei = tx_receipt['gasUsed'] * transaction['gasPrice']
         gas_cost_eth = web3.from_wei(gas_cost_wei, 'ether')
-        
-        # Получаем блок для временной метки
+
+        # Get block for timestamp
         block = web3.eth.get_block(transaction['blockNumber'])
-        
-        # Анализ логов для поиска Transfer событий
+
+        # Check if this is a contract interaction
+        input_data = transaction.get('input', '0x')
+        is_contract_interaction = input_data != '0x'
+
+        # Analyze logs for Transfer events
         transfers = []
         for log in tx_receipt['logs']:
-            if len(log['topics']) == 3:
+            # Check for both ERC20 transfers (3 topics) and other events
+            if len(log['topics']) >= 1:
                 try:
                     token_address = log['address']
-                    
-                    # Пропускаем указанный токен контракт
-                    if token_address.lower() == '0x45383e82f90Ff65391102D460B34E75030b0eB2b'.lower():
+
+                    # Skip ignored contracts from config
+                    if token_address.lower() in IGNORED_CONTRACTS:
                         continue
-                        
-                    from_addr = '0x' + log['topics'][1].hex()[-40:]
-                    to_addr = '0x' + log['topics'][2].hex()[-40:]
-                    
-                    # Правильное декодирование amount
+
+                    # For standard ERC20 transfers
+                    if len(log['topics']) == 3:
+                        from_addr = '0x' + log['topics'][1].hex()[-40:]
+                        to_addr = '0x' + log['topics'][2].hex()[-40:]
+                    else:
+                        # For other types of transfers/events
+                        from_addr = transaction['from']
+                        to_addr = transaction['to']
+
+                    # Proper amount decoding
                     amount_hex = log['data']
                     if isinstance(amount_hex, bytes):
                         amount = int.from_bytes(amount_hex, 'big')
                     else:
                         amount = int(amount_hex, 16)
-                    
+
                     token_info = get_token_info(token_address)
-                    
-                    # Конвертируем amount в правильный формат с учетом decimals
+
+                    # Convert amount to proper format considering decimals
                     try:
                         erc20_abi = [
                             {
@@ -112,19 +124,20 @@ def analyze_transaction(transaction, tx_receipt):
                         decimals = token_contract.functions.decimals().call()
                         amount = amount / (10 ** decimals)
                     except:
-                        # Если не удалось получить decimals, оставляем как есть
+                        # If unable to get decimals, leave as is
                         pass
-                    
+
                     transfers.append({
                         'token': token_info,
                         'from': from_addr,
                         'to': to_addr,
-                        'amount': amount
+                        'amount': amount,
+                        'is_contract_interaction': is_contract_interaction
                     })
                 except Exception as e:
-                    print(f"Ошибка при обработке лога: {e}")
+                    print(f"Error processing log: {e}")
                     continue
-        
+
         return {
             'hash': transaction['hash'].hex(),
             'block_number': transaction['blockNumber'],
@@ -136,85 +149,106 @@ def analyze_transaction(transaction, tx_receipt):
             'gas_used': tx_receipt['gasUsed'],
             'gas_cost_eth': gas_cost_eth,
             'status': 'Success' if tx_receipt['status'] == 1 else 'Failed',
-            'transfers': transfers
+            'transfers': transfers,
+            'is_contract_interaction': is_contract_interaction,
+            'input_data': input_data if is_contract_interaction else None
         }
     except Exception as e:
-        print(f"Ошибка при анализе транзакции: {e}")
+        print(f"Error analyzing transaction: {e}")
         return None
 
 def print_transaction_info(tx_info):
-    """Вывод информации о транзакции"""
+    """Print transaction information"""
     print(f"""
 ═══════════════════════════════════════════════
-Новая транзакция:
+New Transaction:
 ═══════════════════════════════════════════════
-Время: {datetime.fromtimestamp(tx_info['timestamp'])}
-Хэш: {tx_info['hash']}
-Блок: {tx_info['block_number']}
-Статус: {tx_info['status']}
+Time: {datetime.fromtimestamp(tx_info['timestamp'])}
+Hash: {tx_info['hash']}
+Block: {tx_info['block_number']}
+Status: {tx_info['status']}
 
-Отправитель: {tx_info['from']}
-Получатель: {tx_info['to']}
-Значение: {tx_info['value']} ETH
+From: {tx_info['from']}
+To: {tx_info['to']}
+Value: {tx_info['value']} ETH
 
-Газ:
+Gas:
 ----
-Использовано: {tx_info['gas_used']}
-Цена газа: {tx_info['gas_price']} Gwei
-Общая стоимость: {tx_info['gas_cost_eth']} ETH
+Used: {tx_info['gas_used']}
+Gas Price: {tx_info['gas_price']} Gwei
+Total Cost: {tx_info['gas_cost_eth']} ETH
     """)
 
+    if tx_info['is_contract_interaction']:
+        print(f"Contract Interaction: Yes")
+        if config.debug_mode:
+            print(f"Input Data: {tx_info['input_data']}")
+
     if tx_info['transfers']:
-        print("Информация о токенах:")
+        print("Token Information:")
         print("══════════════════════")
-        
+
         for transfer in tx_info['transfers']:
             token = transfer['token']
             amount = transfer['amount']
             price = token['price']
-            
-            # Расчет общей стоимости токенов
+
+            # Calculate total token value
             total_value = amount * price if price is not None else None
-            total_value_str = f"${total_value:.2f}" if total_value is not None else "Нет данных"
-            
+            total_value_str = f"${total_value:.2f}" if total_value is not None else "No data"
+
             print(f"""
-Токен: {token['symbol']} ({token['address']})
-└── Цена: ${token['price'] if token['price'] else 'Нет данных'}
-└── От: {transfer['from']}
-└── Кому: {transfer['to']}
-└── Количество: {amount}
-└── Общая стоимость: {total_value_str}
+Token: {token['symbol']} ({token['address']})
+└── Price: ${token['price'] if token['price'] else 'No data'}
+└── From: {transfer['from']}
+└── To: {transfer['to']}
+└── Amount: {amount}
+└── Total Value: {total_value_str}
             """)
 
 def monitor_transactions():
-    """Мониторинг транзакций"""
+    """Transaction monitoring"""
     last_block = web3.eth.block_number
-    print(f"Начинаем мониторинг с блока {last_block}")
-    
+    print(f"Starting monitoring from block {last_block}")
+
     while True:
         try:
             current_block = web3.eth.block_number
             if current_block > last_block:
                 for block_num in range(last_block + 1, current_block + 1):
-                    block = web3.eth.get_block(block_num, full_transactions=True)
-                    print(f"Проверяем блок {block_num}")
-                    
-                    for tx in block.transactions:
-                        if tx['from'].lower() == WALLET_ADDRESS.lower() or \
-                           (tx['to'] and tx['to'].lower() == WALLET_ADDRESS.lower()):
-                            tx_receipt = web3.eth.get_transaction_receipt(tx['hash'].hex())
-                            tx_info = analyze_transaction(tx, tx_receipt)
-                            if tx_info:
-                                print_transaction_info(tx_info)
-                
-                last_block = current_block
-                
+                    try:
+                        block = web3.eth.get_block(block_num, full_transactions=True)
+                        print(f"Checking block {block_num}")
+
+                        for tx in block.transactions:
+                            if tx['from'].lower() == WALLET_ADDRESS.lower() or \
+                               (tx['to'] and tx['to'].lower() == WALLET_ADDRESS.lower()):
+                                tx_receipt = web3.eth.get_transaction_receipt(tx['hash'].hex())
+                                tx_info = analyze_transaction(tx, tx_receipt)
+                                if tx_info:
+                                    print_transaction_info(tx_info)
+
+                        # Update last_block only after successful processing
+                        last_block = block_num
+
+                        # Add delay between block requests to prevent rate limiting
+                        time.sleep(config.block_delay)
+
+                    except Exception as e:
+                        print(f"Error processing block {block_num}: {e}")
+                        # Don't update last_block if block not found
+                        # This ensures we'll try this block again
+                        break  # Exit the loop to retry from this block
+
         except Exception as e:
-            print(f"Ошибка при мониторинге: {e}")
-        
+            print(f"Monitoring error: {e}")
+            time.sleep(config.retry_delay)
+
         time.sleep(1)
 
 if __name__ == "__main__":
-    print("Начинаем отслеживание транзакций...")
-    print(f"Отслеживаемый адрес: {WALLET_ADDRESS}")
-    monitor_transactions() 
+    print("Starting transaction monitoring...")
+    print(f"Monitored address: {WALLET_ADDRESS}")
+    if config.debug_mode:
+        print(f"Debug mode: enabled")
+    monitor_transactions()

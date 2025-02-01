@@ -1,0 +1,24 @@
+{
+    "openai": {
+        "api_key": "your-openai-api-key-here",
+        "model": "gpt-3.5-turbo",
+        "temperature": 0.7
+    },
+    "max_posts_per_batch": 10,
+    "alchemy": {
+        "api_key": "Hp3f-OvUw0M5z4OCnXhLfql4ymjK1o-K",
+        "network": "base-mainnet",
+        "provider_url": "https://base-mainnet.g.alchemy.com/v2/"
+    },
+    "wallet": {
+        "address": "0xf4Aa85656D9350DaE3D8006D8Fb45c33415E6B21",
+        "ignored_contracts": [
+            "0x45383e82f90Ff65391102D460B34E75030b0eB2b"
+        ]
+    },
+    "monitoring": {
+        "block_delay": 2,
+        "retry_delay": 2
+    },
+    "debug_mode": false
+}

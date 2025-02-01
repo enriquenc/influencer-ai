@@ -39,3 +39,4 @@ config.json
 # Project specific
 post_parser/data/
 **/logs/*
+session_name*
