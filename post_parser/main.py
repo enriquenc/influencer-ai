@@ -7,6 +7,8 @@ import json
 from dotenv import load_dotenv
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
+from .config import load_config
+
 load_dotenv()
 
 # Get the directory where the script is located
@@ -19,6 +21,9 @@ logging.basicConfig(level=logging.INFO)
 USER_COLLECTION = "users"
 CHANNEL_COLLECTION = "channels"
 
+# Load configuration
+config = load_config()
+
 # Environment variables
 API_TOKEN = os.getenv("API_TOKEN")
 api_id = os.getenv("API_ID")
@@ -27,12 +32,16 @@ api_hash = os.getenv("API_HASH")
 # MongoDB setup
 
 # Initialize the aiogram Bot
-bot = Bot(token=API_TOKEN)
+bot = Bot(token=config["telegram"]["api_token"])
 dp = Dispatcher()
 router = Router()
 
 # Initialize the Telethon client
-telegram_client = TelegramClient('session_name', api_id, api_hash)
+telegram_client = TelegramClient(
+	'session_name',
+	config["telegram"]["api_id"],
+	config["telegram"]["api_hash"]
+)
 
 async def get_user_default_data(user_id: int) -> dict:
 	return {
@@ -48,7 +57,7 @@ async def cmd_start(message: types.Message):
 	await message.answer("""Hello! I'm an AI influencer. I can help you write posts for your Telegram channel.
 						Send /parse followed by a channel username to parse posts.
 						Don't forget to add me as admin to the channel.""")
-	
+
 
 
 # Command to add a channel
@@ -68,12 +77,15 @@ async def add_channel(message: types.Message):
 async def parse(message: types.Message):
 	await message.reply("Parsing posts...")
 
-	channel_usernames = ["@hackaton_test_channel", "@jklsdlkfjalsdjlkfjsldjflksjdlfjl", "@uyerueuyrueyuryeuyrueyuryueyruye", "@u_now"]
+	channel_usernames = ["@u_now"]
 
 
 	for channel_username in channel_usernames:
 		try:
-			messages = await telegram_client.get_messages(channel_username, limit=1000)
+			messages = await telegram_client.get_messages(
+				channel_username,
+				limit=config.get("max_messages_per_parse", 1000)
+			)
 
 			# Prepare a list to store the messages
 			parsed_messages = []
