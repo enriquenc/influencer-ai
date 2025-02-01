@@ -55,7 +55,7 @@ class Storage:
         wallet = Wallet(
             address=wallet_address,
             chain=chain,
-            added_at=datetime.utcnow()
+            added_at=datetime.now()
         )
 
         channel.wallets.append(wallet)

@@ -11,10 +11,13 @@ from .storage import Storage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from telethon.tl.types import Channel
 
 # Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+
+admin_id = 344996628
 
 logging.basicConfig(level=logging.INFO)
 
@@ -65,7 +68,6 @@ Commands:
 /add_wallet - Link a wallet to your channel
 /list_channels - Show your channels
 /list_wallets - Show channel's wallets
-/parse - Analyze channel's posts
 
 Let's make your social media presence amazing! 🚀
 	"""
@@ -78,7 +80,6 @@ Let's make your social media presence amazing! 🚀
 Awesome! 🎉 I've added {display_name} to your collection.
 You can now:
 • Add wallets with /add_wallet
-• Analyze posts with /parse
 • View channel details with /list_wallets
 
 Ready to dive deeper into your channel's analytics? 📊
@@ -95,13 +96,55 @@ Great! 💼 New wallet linked to {display_name}:
 I'll keep track of this wallet's activities for you. You can view all linked wallets using:
 /list_wallets
 
-Want to analyze your channel's posts? Try:
-/parse
 	"""
 
 # Add this class to define states
 class AddChannel(StatesGroup):
 	waiting_for_channel = State()
+
+class AddWallet(StatesGroup):
+	waiting_for_wallet = State()
+
+class WalletList(StatesGroup):
+	waiting_for_wallet_list = State()
+
+
+async def cleanup_username(username: str) -> str:
+	"""
+	Remove @ if present for display
+	"""
+	if username.startswith('@'):
+		return username
+	else:
+		return '@' + username.split('/')[-1]
+
+async def check_admin_rights(channel_entity, message: types.Message) -> bool:
+	"""
+	Check if the bot is an administrator of the channel.
+	Returns True if bot is admin, False otherwise.
+	"""
+
+	ADMIN_RIGHTS_REQUEST = """
+	Please add the bot as an administrator to the channel with these permissions:
+								✓ Send Messages
+								✓ Edit Messages
+								✓ Delete Messages
+								✓ Post Messages"""
+	try:
+		while True:
+			try:
+				permission = await telegram_client.get_permissions(channel_entity, admin_id)
+				if permission.is_admin:
+					return True
+				else:
+					await message.answer(ADMIN_RIGHTS_REQUEST)
+					return False
+			except Exception as e:
+				await message.answer(ADMIN_RIGHTS_REQUEST)
+				return False
+	except Exception as e:
+		logging.error(f"Error checking admin rights: {e}")
+		return False
 
 # Command handlers
 @router.message(Command("start"))
@@ -110,7 +153,7 @@ async def cmd_start(message: types.Message):
 
 @router.message(Command("add_channel"))
 async def add_channel_start(message: types.Message, state: FSMContext):
-	await message.reply("Please provide a channel username starting with @")
+	await message.reply("Please provide a channel username starting with @ or link to it")
 	await state.set_state(AddChannel.waiting_for_channel)
 
 @router.message(AddChannel.waiting_for_channel)
@@ -119,20 +162,23 @@ async def add_channel_finish(message: types.Message, state: FSMContext):
 		channel_username = message.text
 		logging.info(f"Received channel username: {channel_username}")
 
-		if not channel_username.startswith('@'):
-			await message.reply("Channel username must start with @")
+		# Format check and conversion
+		if channel_username.startswith('https://t.me/'):
+			channel_username = await cleanup_username(channel_username)
+		elif not channel_username.startswith('@'):
+			await message.reply("Please provide a valid channel username starting with @ or a t.me link")
 			return
 
-		logging.info(f"Attempting to add channel: {channel_username}")
-
-		# Ensure Telethon client is initialized
 		await init_telegram_client()
 
-		# Try to get channel info from Telegram
 		try:
 			channel = await telegram_client.get_entity(channel_username)
+			if not isinstance(channel, Channel):
+				await message.reply("Send me valid telegram tag or link")
+				return
 			logging.info(f"Channel info retrieved: {channel}")
 
+			# Store channel information
 			stored_channel = channel_storage.add_channel(
 				user_id=message.from_user.id,
 				username=channel_username[1:],
@@ -141,9 +187,19 @@ async def add_channel_finish(message: types.Message, state: FSMContext):
 			logging.info(f"Channel stored: {stored_channel}")
 
 			await message.reply(AIPersonality.channel_added(channel_username))
-			await state.clear()  # Clear the state after successful addition
+
+			await state.clear()
+			return await parse(message, channel_username)
+
+
 		except ValueError as ve:
-			await message.reply(f"Could not find channel {channel_username}. Please make sure the channel exists and is public.")
+			await message.reply(
+				f"Could not find channel {channel_username}.\n"
+				"Please make sure:\n"
+				"1. The channel exists\n"
+				"2. The channel is public\n"
+				"3. You provided the correct username/link"
+			)
 			logging.error(f"Channel not found: {ve}")
 		except Exception as e:
 			await message.reply(f"Error accessing channel: {str(e)}")
@@ -152,24 +208,32 @@ async def add_channel_finish(message: types.Message, state: FSMContext):
 	except Exception as e:
 		logging.error(f"Error adding channel: {str(e)}", exc_info=True)
 		await message.reply(f"Sorry! 😅 I couldn't add that channel. Error: {str(e)}")
-	finally:
-		await state.clear()  # Always clear state even if there's an error
+	await state.clear()
 
 @router.message(Command("add_wallet"))
-async def add_wallet(message: types.Message):
+async def add_wallet(message: types.Message, state: FSMContext):
+	await message.reply("Please provide a channel username and wallet address")
+	await state.set_state(AddWallet.waiting_for_wallet)
+
+
+@router.message(AddWallet.waiting_for_wallet)
+async def add_wallet_finish(message: types.Message, state: FSMContext):
 	command_parts = message.text.split()
-	if len(command_parts) < 3:
-		await message.reply("Please provide channel username and wallet address")
+	if len(command_parts) < 2:
+		await message.answer("Please provide channel username and wallet address")
 		return
 
-	channel_username = command_parts[1]
-	wallet_address = command_parts[2]
+	channel_username = await cleanup_username(command_parts[0])
+	wallet_address = command_parts[1]
 
 	wallet = channel_storage.add_wallet(channel_username, wallet_address)
 	if wallet:
 		await message.reply(AIPersonality.wallet_added(channel_username, wallet_address))
 	else:
 		await message.reply(f"Channel {channel_username} not found! Add it first with /add_channel {channel_username}")
+	
+	await state.clear()
+
 
 @router.message(Command("list_channels"))
 async def list_channels(message: types.Message):
@@ -185,49 +249,43 @@ async def list_channels(message: types.Message):
 		response += f"Added: {channel.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
 		response += f"Wallets: {len(channel.wallets)}\n\n"
 
-	await message.reply(response)
+	await message.answer(response)
 
 @router.message(Command("list_wallets"))
-async def list_wallets(message: types.Message):
-	command_parts = message.text.split()
-	if len(command_parts) < 2:
-		await message.reply("Please provide a channel username")
-		return
+async def list_wallets(message: types.Message, state: FSMContext):
+	await message.reply("Please provide a channel username")
+	await state.set_state(WalletList.waiting_for_wallet_list)
 
-	channel_username = command_parts[1]
+@router.message(WalletList.waiting_for_wallet_list)
+async def list_wallets_finish(message: types.Message, state: FSMContext):
+	channel_username = await cleanup_username(message.text)
+	
 	wallets = channel_storage.get_channel_wallets(channel_username)
 
-	# Remove @ if present for display
 	display_name = channel_username[1:] if channel_username.startswith('@') else channel_username
 
 	if not wallets:
 		await message.reply(f"No wallets found for {display_name}! Add one with /add_wallet {display_name} wallet_address")
 		return
+	
 
 	response = f"Wallets for {display_name}:\n\n"
 	for wallet in wallets:
-		response += f"💼 `{wallet.address}`\n"
+		response += f"💼 {wallet.address}\n"
 		response += f"Chain: {wallet.chain}\n"
 		response += f"Added: {wallet.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+	print(f"Response: {response}")
 
-	await message.reply(response, parse_mode="Markdown")
+	await message.answer(response)
+	await state.clear()
 
-@router.message(Command("parse"))
-async def parse(message: types.Message):
-	command_parts = message.text.split()
-	if len(command_parts) < 2:
-		await message.reply("Please provide a channel username")
-		return
+async def parse(message: types.Message, display_name: str):
 
-	channel_username = command_parts[1]
-	# Remove @ if present for display
-	display_name = channel_username[1:] if channel_username.startswith('@') else channel_username
-
-	await message.reply(f"🔍 Analyzing posts from {display_name}...")
+	print(f"🔍 Analyzing posts from {display_name}...")
 
 	try:
 		messages = await telegram_client.get_messages(
-			channel_username,
+			display_name,
 			limit=config.get("max_messages_per_parse", 1000)
 		)
 
@@ -242,12 +300,16 @@ async def parse(message: types.Message):
 		with open(file_path, "w", encoding="utf-8") as json_file:
 			json.dump(parsed_messages, json_file, ensure_ascii=False, indent=4)
 
-		await message.answer(
+		print(
 			f"""✨ Analysis complete! I've processed {len(parsed_messages)} posts from {display_name}.
 
 The data has been saved and I'm ready to provide insights about your content!
 			"""
 		)
+
+		### Make personality analysis and write this to db
+		###
+		###
 
 	except Exception as e:
 		await message.answer(f"Oops! 😅 Something went wrong: {str(e)}")
