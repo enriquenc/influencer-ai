@@ -4,6 +4,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from telethon.tl.types import Channel
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from ..bot.states import AddChannel, AddWallet
 from ..bot.responses import AIPersonality
@@ -129,7 +130,15 @@ The complete data has been saved!
                     f"\n\n❌ Debug Mode: Failed to add default channel @{debug_channel}."
                 )
         else:
-            await message.answer(AIPersonality.WELCOME_MESSAGE)
+            await message.answer(
+                AIPersonality.WELCOME_MESSAGE +
+                "\n\nAvailable commands:\n"
+                "/add_channel - Add a new channel\n"
+                "/list_channels - View your channels\n"
+                "/add_wallet - Add Base wallet to channel\n"
+                "/generate_post - Generate test post for channel\n"
+                "/help - Show this help message"
+            )
 
     @router.message(Command("add_channel"))
     async def add_channel_start(message: types.Message, state: FSMContext):
@@ -414,7 +423,139 @@ Use /list_channels to see all your channels and wallets"""
         response += (
             "Commands:\n"
             "/add_channel - Add new channel\n"
-            "/add_wallet - Add Base wallet to channel"
+            "/add_wallet - Add Base wallet to channel\n"
+            "/generate_post - Generate test post for channel"
         )
 
         await message.answer(response)
+
+    @router.message(Command("generate_post"))
+    async def generate_post_start(message: types.Message):
+        """Start the post generation process by showing channel selection"""
+        channels = channel_storage.get_user_channels(message.from_user.id)
+
+        if not channels:
+            await message.reply(
+                "❌ You haven't added any channels yet!\n"
+                "Use /add_channel to get started."
+            )
+            return
+
+        # Create inline keyboard with channels
+        builder = InlineKeyboardBuilder()
+        for channel in channels:
+            builder.button(
+                text=f"@{channel.username}",
+                callback_data=ChannelAction(
+                    action="generate_post",
+                    username=channel.username
+                ).pack()
+            )
+        builder.adjust(1)  # One button per row
+
+        await message.reply(
+            "🎯 Select a channel to generate a test post:",
+            reply_markup=builder.as_markup()
+        )
+
+    @router.callback_query(ChannelAction.filter(F.action == "generate_post"))
+    async def generate_post_callback(
+        query: types.CallbackQuery,
+        callback_data: ChannelAction
+    ):
+        """Handle channel selection for post generation"""
+        channel_username = callback_data.username
+        channel = channel_storage.get_channel(channel_username)
+
+        if not channel or not channel.personality:
+            await query.message.edit_text(
+                "❌ Channel personality not found. Please analyze the channel first using /add_channel"
+            )
+            return
+
+        try:
+            # Use personality_analyzer from closure
+            post = personality_analyzer.generate_post(
+                personality=channel.personality
+            )
+
+            # Create approve/regenerate keyboard
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text="✅ Approve & Post",
+                callback_data=ChannelAction(
+                    action="approve_post",
+                    username=channel_username
+                ).pack()
+            )
+            builder.button(
+                text="🔄 Regenerate",
+                callback_data=ChannelAction(
+                    action="generate_post",
+                    username=channel_username
+                ).pack()
+            )
+            builder.adjust(2)  # Two buttons in one row
+
+            # Show personality traits used for generation
+            await query.message.edit_text(
+                f"📝 Generated post for @{channel_username}\n"
+                f"Based on:\n"
+                f"• Traits: {', '.join(channel.personality.traits[:3])}\n"
+                f"• Interests: {', '.join(channel.personality.interests[:3])}\n"
+                f"• Style: {channel.personality.communication_style[:100]}...\n\n"
+                f"Generated Post:\n"
+                f"{'─' * 32}\n"
+                f"{post}\n"
+                f"{'─' * 32}\n\n"
+                "What would you like to do?",
+                reply_markup=builder.as_markup()
+            )
+
+        except Exception as e:
+            logger.error(f"Error generating post: {e}", exc_info=True)
+            await query.message.edit_text(
+                "❌ Failed to generate post. Please try again later."
+            )
+
+    @router.callback_query(ChannelAction.filter(F.action == "approve_post"))
+    async def approve_post_callback(
+        query: types.CallbackQuery,
+        callback_data: ChannelAction
+    ):
+        """Handle post approval and publishing"""
+        try:
+            # Get the generated post text (excluding the header and buttons)
+            post_text = query.message.text.split('\n\n')[1]  # Get the post content
+
+            # Use channel_service from closure
+            await channel_service.send_message(
+                channel_username=callback_data.username,
+                message=post_text
+            )
+
+            await query.message.edit_text(
+                f"✅ Post successfully published to @{callback_data.username}!"
+            )
+
+        except Exception as e:
+            logger.error(f"Error publishing post: {e}", exc_info=True)
+            await query.message.edit_text(
+                "❌ Failed to publish post. Please try again later."
+            )
+
+    @router.message(Command("help"))
+    async def cmd_help(message: types.Message):
+        help_text = (
+            "🤖 Available Commands:\n\n"
+            "📢 Channel Management:\n"
+            "/add_channel - Add a new channel\n"
+            "/list_channels - View your channels\n"
+            "/generate_post - Generate test post for channel\n\n"
+            "💼 Wallet Management:\n"
+            "/add_wallet - Add Base wallet to channel\n\n"
+            "ℹ️ Other:\n"
+            "/help - Show this help message\n"
+            "/cancel - Cancel current operation"
+        )
+        await message.answer(help_text)

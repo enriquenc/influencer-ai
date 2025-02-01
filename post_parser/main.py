@@ -6,7 +6,7 @@ import os
 
 from .bot.handlers import setup_handlers
 from .config import load_config
-from .storage.storage import Storage
+from storage.storage import Storage
 from .services.channel_service import ChannelService
 from .services.parser_service import ParserService
 from personality_analyzer import CharacterAnalyzer
