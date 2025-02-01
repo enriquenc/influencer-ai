@@ -73,11 +73,13 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 	# Initialize services
 	channel_service = ChannelService(telegram_client)
 	parser_service = ParserService(telegram_client, DATA_DIR, config)
-	log_service = LogService(SCRIPT_DIR)  # Initialize log service
+	log_service = LogService(SCRIPT_DIR)
 
 	# Initialize bot and dispatcher
 	bot = Bot(token=config["telegram"]["api_token"])
 	dp = Dispatcher(storage=MemoryStorage())
+
+	# Create and include router
 	router = Router(name="main_router")
 	dp.include_router(router)
 
@@ -88,11 +90,12 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 		channel_service=channel_service,
 		parser_service=parser_service,
 		personality_analyzer=analyzer,
-		log_service=log_service  # Pass log service
+		log_service=log_service,
+		config=config
 	)
 
-	# Start polling
-	await dp.start_polling(bot, allowed_updates=["message"])
+	# Start polling with allowed updates for callback queries
+	await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 async def main() -> None:
 	try:

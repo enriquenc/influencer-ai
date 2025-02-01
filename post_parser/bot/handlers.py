@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from telethon.tl.types import Channel
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-from ..bot.states import AddChannel, AddWallet, WalletList
+from ..bot.states import AddChannel, AddWallet
 from ..bot.responses import AIPersonality
 from ..bot.callbacks import ChannelAction
 
@@ -17,7 +17,8 @@ def setup_handlers(
     channel_service,
     parser_service,
     personality_analyzer,
-    log_service
+    log_service,
+    config: dict
 ) -> None:
     """Setup all bot command handlers"""
 
@@ -59,7 +60,76 @@ The complete data has been saved!
 
     @router.message(Command("start"))
     async def cmd_start(message: types.Message):
-        await message.answer(AIPersonality.WELCOME_MESSAGE)
+        # Check if debug mode is enabled
+        if config.get("debug_mode", False):
+            debug_channel = config.get("debug_channel", "UkraineNow")
+            logger.info(f"Debug mode enabled, adding default channel: {debug_channel}")
+            try:
+                # Send initial processing message
+                processing_msg = await message.answer(
+                    f"🔧 Debug Mode: Setting up default channel...\n"
+                    f"1. Adding @{debug_channel}..."
+                )
+
+                # Add default debug channel
+                stored_channel = channel_storage.add_channel(
+                    user_id=message.from_user.id,
+                    username=debug_channel,
+                    title=f"{debug_channel} [Debug Channel]"
+                )
+
+                await processing_msg.edit_text(
+                    f"🔧 Debug Mode: Setting up default channel...\n"
+                    f"1. ✅ Channel added\n"
+                    f"2. Starting personality analysis..."
+                )
+
+                # Parse and analyze channel messages
+                parsed_messages = await parser_service.parse_channel(f"@{debug_channel}")
+
+                await processing_msg.edit_text(
+                    f"🔧 Debug Mode: Setting up default channel...\n"
+                    f"1. ✅ Channel added\n"
+                    f"2. ✅ Messages collected\n"
+                    f"3. Generating personality profile..."
+                )
+
+                # Analyze personality
+                personality = personality_analyzer.analyze_posts(parsed_messages)
+
+                # Update storage with personality
+                channel_storage.update_channel_personality(debug_channel, personality)
+
+                # Save personality to logs
+                log_service.save_personality(debug_channel, personality)
+
+                # Delete processing message
+                await processing_msg.delete()
+
+                # Send welcome message with debug info
+                await message.answer(
+                    AIPersonality.WELCOME_MESSAGE +
+                    f"\n\n🔧 Debug Mode: Default channel @{debug_channel} has been added!\n\n"
+                    f"Channel Profile:\n"
+                    f"👤 Personality Traits:\n"
+                    f"{' • '.join([''] + personality.traits[:3])}\n\n"
+                    f"🎯 Main Interests:\n"
+                    f"{' • '.join([''] + personality.interests[:3])}\n\n"
+                    f"💬 Communication Style:\n"
+                    f"{personality.communication_style}\n\n"
+                    f"📊 Analysis based on {len(parsed_messages)} messages"
+                )
+
+                logger.info(f"Debug channel added and analyzed: {stored_channel}")
+
+            except Exception as e:
+                logger.error(f"Error adding debug channel: {e}")
+                await message.answer(
+                    AIPersonality.WELCOME_MESSAGE +
+                    f"\n\n❌ Debug Mode: Failed to add default channel @{debug_channel}."
+                )
+        else:
+            await message.answer(AIPersonality.WELCOME_MESSAGE)
 
     @router.message(Command("add_channel"))
     async def add_channel_start(message: types.Message, state: FSMContext):
@@ -156,7 +226,7 @@ Channel Profile for {channel_username}:
 {' • '.join([''] + personality.interests[:3])}
 
 💬 Communication Style:
-{personality.communication_style[:200]}...
+{personality.communication_style}
 
 📊 Analysis based on {len(parsed_messages)} messages
 
@@ -187,6 +257,7 @@ Use /add_wallet to link a wallet to this channel
     async def add_wallet(message: types.Message, state: FSMContext):
         # Get user's channels first
         channels = channel_storage.get_user_channels(message.from_user.id)
+        logger.info(f"Retrieved channels for user {message.from_user.id}: {channels}")
 
         if not channels:
             await message.reply(
@@ -201,42 +272,61 @@ Use /add_wallet to link a wallet to this channel
                 [
                     InlineKeyboardButton(
                         text=f"@{channel.username}",
-                        callback_data=f"select_channel:{channel.username}"  # Simple string format
+                        callback_data=f"select:{channel.username}"
                     )
                 ] for channel in channels
             ]
         )
+        logger.info("Created keyboard with buttons: " +
+                   str([btn.callback_data for row in keyboard.inline_keyboard for btn in row]))
 
         await message.reply(
             "🔗 Select a channel to add a wallet:",
             reply_markup=keyboard
         )
 
-    @router.callback_query(lambda c: c.data and c.data.startswith("select_channel:"))
+    @router.callback_query(lambda c: c.data and c.data.startswith("select:"))
     async def channel_selected(callback: types.CallbackQuery, state: FSMContext):
+        logger.info(f"Processing channel selection callback with data: {callback.data}")
         try:
             # Extract channel username from callback data
-            channel_username = callback.data.split(":")[-1]
+            channel_username = callback.data.split(":", 1)[1]
+            logger.info(f"Extracted channel username: {channel_username}")
 
             # Store selected channel in state
             await state.update_data(selected_channel=channel_username)
+            current_state = await state.get_state()
+            logger.info(f"Current state before setting: {current_state}")
+
             await state.set_state(AddWallet.waiting_for_wallet)
+            current_state = await state.get_state()
+            logger.info(f"Current state after setting: {current_state}")
 
             # Answer the callback to remove loading state
-            await callback.answer()
+            await callback.answer("Channel selected!")
 
-            # Update message text
-            await callback.message.edit_text(
-                f"Selected channel: @{channel_username}\n\n"
-                "💼 Please enter the wallet address now.\n\n"
-                "Supported formats:\n"
-                "• ETH: 0x...\n"
-                "• SOL: ...\n"
-                "• BTC: bc1...\n\n"
-                "Type /cancel to abort"
-            )
+            try:
+                # Update message text
+                await callback.message.edit_text(
+                    f"Selected channel: @{channel_username}\n\n"
+                    "💼 Please enter the Base wallet address.\n\n"
+                    "Format:\n"
+                    "• Base: 0x...\n\n"
+                    "Type /cancel to abort"
+                )
+                logger.info("Successfully processed channel selection")
+            except Exception as e:
+                logger.error(f"Error updating message: {e}", exc_info=True)
+                # Try sending a new message if editing fails
+                await callback.message.answer(
+                    f"Selected channel: @{channel_username}\n\n"
+                    "💼 Please enter the Base wallet address.\n\n"
+                    "Format:\n"
+                    "• Base: 0x...\n\n"
+                    "Type /cancel to abort"
+                )
         except Exception as e:
-            logger.error(f"Error in channel selection: {e}")
+            logger.error(f"Error in channel selection: {e}", exc_info=True)
             await callback.answer("❌ Error processing selection", show_alert=True)
 
     @router.message(AddWallet.waiting_for_wallet)
@@ -247,24 +337,24 @@ Use /add_wallet to link a wallet to this channel
             channel_username = state_data.get('selected_channel')
             wallet_address = message.text.strip()
 
-            # Basic wallet address validation
-            if not wallet_address or len(wallet_address) < 26:  # minimum length for crypto addresses
+            # Basic wallet address validation for Base (Ethereum format)
+            if not wallet_address.startswith('0x') or len(wallet_address) != 42:
                 await message.reply(
-                    "❌ Invalid wallet address!\n\n"
-                    "Please provide a valid cryptocurrency wallet address"
+                    "❌ Invalid Base wallet address!\n\n"
+                    "Please provide a valid Base wallet address starting with 0x"
                 )
                 return
 
-            # Add wallet to storage
-            wallet = channel_storage.add_wallet(channel_username, wallet_address)
+            # Add wallet to storage with Base chain
+            wallet = channel_storage.add_wallet(channel_username, wallet_address, chain="Base")
             if wallet:
                 await message.reply(
                     f"""✅ Wallet successfully added!
 
 📢 Channel: @{channel_username}
-💼 Wallet: `{wallet_address}`
+💼 Base Wallet: `{wallet_address}`
 
-Use /list_wallets @{channel_username} to see all wallets for this channel"""
+Use /list_channels to see all your channels and wallets"""
                 )
             else:
                 await message.reply(
@@ -293,39 +383,38 @@ Use /list_wallets @{channel_username} to see all wallets for this channel"""
         channels = channel_storage.get_user_channels(message.from_user.id)
 
         if not channels:
-            await message.reply("You haven't added any channels yet! Use /add_channel to get started.")
+            await message.reply(
+                "❌ You haven't added any channels yet!\n"
+                "Use /add_channel to get started."
+            )
             return
 
-        response = "Your channels:\n\n"
+        response = "📊 Your Channels:\n\n"
         for channel in channels:
-            response += f"📢 {channel.username}\n"
-            response += f"Added: {channel.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-            response += f"Wallets: {len(channel.wallets)}\n\n"
+            response += f"📢 Channel: @{channel.username}\n"
+            response += f"📅 Added: {channel.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+
+            if channel.personality:
+                response += "\n🧠 Personality:\n"
+                response += f"• Traits: {', '.join(channel.personality.traits[:3])}\n"
+                response += f"• Interests: {', '.join(channel.personality.interests[:3])}\n"
+                response += f"• Style: {channel.personality.communication_style[:200]}...\n"
+
+            if channel.wallets:
+                response += "\n💼 Base Wallets:\n"
+                for wallet in channel.wallets:
+                    response += f"  • {wallet.address}\n"
+                    response += f"    Added: {wallet.added_at.strftime('%Y-%m-%d %H:%M')}\n"
+            else:
+                response += "\n💼 No wallets added yet\n"
+
+            response += "\n" + "─" * 32 + "\n\n"
+
+        # Add helpful commands at the bottom
+        response += (
+            "Commands:\n"
+            "/add_channel - Add new channel\n"
+            "/add_wallet - Add Base wallet to channel"
+        )
 
         await message.answer(response)
-
-    @router.message(Command("list_wallets"))
-    async def list_wallets(message: types.Message, state: FSMContext):
-        await message.reply("Please provide a channel username")
-        await state.set_state(WalletList.waiting_for_wallet_list)
-
-    @router.message(WalletList.waiting_for_wallet_list)
-    async def list_wallets_finish(message: types.Message, state: FSMContext):
-        try:
-            channel_username = await channel_service.cleanup_username(message.text)
-            wallets = channel_storage.get_channel_wallets(channel_username)
-            display_name = channel_username[1:] if channel_username.startswith('@') else channel_username
-
-            if not wallets:
-                await message.reply(f"No wallets found for {display_name}! Add one with /add_wallet {display_name} wallet_address")
-                return
-
-            response = f"Wallets for {display_name}:\n\n"
-            for wallet in wallets:
-                response += f"💼 {wallet.address}\n"
-                response += f"Chain: {wallet.chain}\n"
-                response += f"Added: {wallet.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-
-            await message.answer(response)
-        finally:
-            await state.clear()

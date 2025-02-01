@@ -6,14 +6,13 @@ Hey there! 👋 I'm your AI Influencer Assistant, and I'm here to help you analy
 
 Here's what I can do for you:
 📊 Parse and analyze your Telegram channel posts
-💼 Track wallets associated with your channels
+💼 Track Base wallets associated with your channels
 📈 Provide insights about your content
 
 Commands:
 /add_channel - Add a Telegram channel
-/add_wallet - Link a wallet to your channel
-/list_channels - Show your channels
-/list_wallets - Show channel's wallets
+/add_wallet - Link a Base wallet to your channel
+/list_channels - Show your channels and wallets
 
 Let's make your social media presence amazing! 🚀
     """
@@ -24,8 +23,8 @@ Let's make your social media presence amazing! 🚀
         return f"""
 Awesome! 🎉 I've added {display_name} to your collection.
 You can now:
-• Add wallets with /add_wallet
-• View channel details with /list_wallets
+• Add Base wallets with /add_wallet
+• View channel details with /list_channels
 
 Ready to dive deeper into your channel's analytics? 📊
         """

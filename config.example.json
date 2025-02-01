@@ -6,6 +6,7 @@
     },
     "max_messages_per_parse": 10,
     "debug_mode": false,
+    "debug_channel": "",
     "openai": {
         "api_key": "your-openai-api-key-here",
         "model": "gpt-3.5-turbo",
