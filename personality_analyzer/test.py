@@ -87,7 +87,55 @@ def test_analyzer():
         print(f"Error type: {type(e).__name__}")
         return False
 
+def test_incremental_analysis():
+    """Test incremental personality analysis with new posts"""
+    try:
+        config = load_config()
+        analyzer = CharacterAnalyzer(
+            api_key=config['openai']['api_key'],
+            model=config['openai']['model'],
+            temperature=config['openai']['temperature']
+        )
+
+        # Initial posts
+        initial_posts = [
+            "Just finished my coding session! Built an amazing AI model 🤖",
+            "Reading 'Clean Code' for the third time 📚"
+        ]
+
+        print("\n=== Initial Analysis ===")
+        personality = analyzer.analyze_posts(initial_posts)
+        print("\nInitial Traits:")
+        for trait in personality.traits:
+            print(f"- {trait}")
+
+        # New posts come in
+        new_posts = [
+            "Teaching a Python workshop today! Love sharing knowledge 🎓",
+            "Just joined a local tech meetup group 🤝"
+        ]
+
+        print("\n=== Updated Analysis ===")
+        updated_personality = analyzer.analyze_posts(new_posts, previous_personality=personality)
+        print("\nUpdated Traits:")
+        for trait in updated_personality.traits:
+            print(f"- {trait}")
+
+        print("\nChanges Noted:")
+        for change in updated_personality.raw_analysis.get("changes_noted", []):
+            print(f"- {change}")
+
+        print(f"\nTotal Posts Analyzed: {updated_personality.post_count}")
+        print(f"Profile Age: Created {updated_personality.created_at}, Last Updated {updated_personality.updated_at}")
+
+        return True
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        print(f"Error type: {type(e).__name__}")
+        return False
+
 if __name__ == "__main__":
-    success = test_analyzer()
+    success = test_analyzer() and test_incremental_analysis()
     if not success:
         sys.exit(1)

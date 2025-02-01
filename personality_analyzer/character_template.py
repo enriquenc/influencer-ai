@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 import json
 from datetime import datetime
 from openai import OpenAI
@@ -13,6 +13,8 @@ class Personality:
     interests: List[str]
     communication_style: str
     created_at: str
+    updated_at: str  # New field to track last update
+    post_count: int  # New field to track number of analyzed posts
     raw_analysis: dict
 
     def to_json(self) -> str:
@@ -34,32 +36,62 @@ class CharacterAnalyzer:
         self.model = model
         self.temperature = temperature
 
-    def analyze_posts(self, posts: List[str]) -> Personality:
+    def analyze_posts(self, posts: List[str], previous_personality: Optional[Personality] = None) -> Personality:
         """
-        Analyze array of posts and generate a personality profile
+        Analyze array of posts and generate or update a personality profile
 
         Args:
             posts: List of text posts to analyze
+            previous_personality: Optional existing personality to update
 
         Returns:
-            Personality object containing the analysis
+            Updated or new Personality object
         """
-        # Combine posts into single text for analysis
         combined_text = "\n".join(posts)
+        current_time = datetime.utcnow().isoformat()
 
-        # Create prompt for GPT
-        system_message = """You are a personality analyzer. Analyze the social media posts and create a detailed personality profile.
-        Provide the analysis in valid JSON format with the following structure:
-        {
-            "name": "Anonymous",
-            "traits": ["trait1", "trait2", ...],
-            "interests": ["interest1", "interest2", ...],
-            "communication_style": "detailed description"
-        }"""
+        if previous_personality:
+            system_message = """You are a personality analyzer. You will be given a previous personality analysis and new posts.
+            Update the personality profile considering both the previous analysis and new information from the posts.
+            Focus on evolving traits and interests based on new evidence, while maintaining consistency with previous observations where appropriate."""
 
-        user_message = f"Posts to analyze:\n{combined_text}"
+            user_message = f"""Previous personality analysis:
+            Traits: {', '.join(previous_personality.traits)}
+            Interests: {', '.join(previous_personality.interests)}
+            Communication Style: {previous_personality.communication_style}
 
-        # Get analysis from GPT using new API format
+            New posts to analyze:
+            {combined_text}
+
+            Provide an updated analysis in valid JSON format with the following structure:
+            {{
+                "name": "{previous_personality.name}",
+                "traits": ["trait1", "trait2", ...],
+                "interests": ["interest1", "interest2", ...],
+                "communication_style": "detailed description",
+                "changes_noted": ["change1", "change2", ...]
+            }}"""
+
+            post_count = previous_personality.post_count + len(posts)
+            created_at = previous_personality.created_at
+        else:
+            system_message = """You are a personality analyzer. Analyze the social media posts and create a detailed personality profile."""
+
+            user_message = f"""Posts to analyze:
+            {combined_text}
+
+            Provide analysis in valid JSON format with the following structure:
+            {{
+                "name": "Anonymous",
+                "traits": ["trait1", "trait2", ...],
+                "interests": ["interest1", "interest2", ...],
+                "communication_style": "detailed description",
+                "changes_noted": []
+            }}"""
+
+            post_count = len(posts)
+            created_at = current_time
+
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -69,15 +101,23 @@ class CharacterAnalyzer:
             temperature=self.temperature
         )
 
-        # Parse response
         analysis = json.loads(response.choices[0].message.content.strip())
 
-        # Create Personality object
+        # Store any noted changes in raw_analysis
+        raw_analysis = {
+            **analysis,
+            "previous_traits": previous_personality.traits if previous_personality else None,
+            "previous_interests": previous_personality.interests if previous_personality else None,
+            "previous_communication_style": previous_personality.communication_style if previous_personality else None
+        }
+
         return Personality(
             name=analysis["name"],
             traits=analysis["traits"],
             interests=analysis["interests"],
             communication_style=analysis["communication_style"],
-            created_at=datetime.utcnow().isoformat(),
-            raw_analysis=analysis
+            created_at=created_at,
+            updated_at=current_time,
+            post_count=post_count,
+            raw_analysis=raw_analysis
         )
