@@ -531,8 +531,13 @@ Use /list_channels to see all your channels and wallets"""
     ):
         """Handle post approval and publishing"""
         try:
-            # Get the generated post text (excluding the header and buttons)
-            post_text = query.message.text.split('\n\n')[1]  # Get the post content
+            # Extract just the post content between the separator lines
+            message_parts = query.message.text.split('─' * 32)
+            if len(message_parts) >= 3:
+                # Get the content between the separator lines
+                post_text = message_parts[1].strip()
+            else:
+                raise ValueError("Could not extract post content")
 
             # Use channel_service from closure
             await channel_service.send_message(
