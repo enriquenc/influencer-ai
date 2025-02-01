@@ -8,3 +8,4 @@ config.json
 **/data/*
 session_name*
 post_parser/clear_data.sh
+config.json
