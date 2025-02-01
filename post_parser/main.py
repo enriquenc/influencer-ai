@@ -9,6 +9,8 @@ from .config import load_config
 from .storage.storage import Storage
 from .services.channel_service import ChannelService
 from .services.parser_service import ParserService
+from personality_analyzer import CharacterAnalyzer
+from .services.log_service import LogService
 
 # Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +55,44 @@ async def init_telegram_client():
 		if not telegram_client.is_connected():
 			await telegram_client.connect()
 			logger.info("Telethon client connected successfully")
+
+async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
+	"""Setup and run the bot with all dependencies"""
+
+	# Initialize Telegram client
+	telegram_client = TelegramClient(
+		'session_name',
+		config["telegram"]["api_id"],
+		config["telegram"]["api_hash"]
+	)
+
+	if not telegram_client.is_connected():
+		await telegram_client.connect()
+		logger.info("Telethon client connected successfully")
+
+	# Initialize services
+	channel_service = ChannelService(telegram_client)
+	parser_service = ParserService(telegram_client, DATA_DIR, config)
+	log_service = LogService(SCRIPT_DIR)  # Initialize log service
+
+	# Initialize bot and dispatcher
+	bot = Bot(token=config["telegram"]["api_token"])
+	dp = Dispatcher(storage=MemoryStorage())
+	router = Router(name="main_router")
+	dp.include_router(router)
+
+	# Setup handlers with all dependencies
+	setup_handlers(
+		router=router,
+		channel_storage=storage,
+		channel_service=channel_service,
+		parser_service=parser_service,
+		personality_analyzer=analyzer,
+		log_service=log_service  # Pass log service
+	)
+
+	# Start polling
+	await dp.start_polling(bot, allowed_updates=["message"])
 
 async def main() -> None:
 	try:

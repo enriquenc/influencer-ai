@@ -7,13 +7,53 @@ from telethon.tl.types import Channel
 from ..bot.states import AddChannel, AddWallet, WalletList
 from ..bot.responses import AIPersonality
 
+logger = logging.getLogger(__name__)
+
 def setup_handlers(
     router: Router,
     channel_storage,
     channel_service,
-    parser_service
+    parser_service,
+    personality_analyzer,
+    log_service
 ) -> None:
     """Setup all bot command handlers"""
+
+    async def parse_channel_messages(message: types.Message, channel_username: str):
+        """Parse and analyze channel messages"""
+        try:
+            parsed_messages = await parser_service.parse_channel(channel_username)
+
+            # Analyze personality
+            personality = personality_analyzer.analyze_posts(parsed_messages)
+
+            # Update storage with personality
+            channel_storage.update_channel_personality(channel_username, personality)
+
+            # Save personality to logs
+            log_service.save_personality(channel_username, personality)
+
+            # Log analysis results
+            logger.info(
+                f"Personality analysis for {channel_username}:\n"
+                f"Traits: {', '.join(personality.traits)}\n"
+                f"Interests: {', '.join(personality.interests)}\n"
+                f"Communication Style: {personality.communication_style}"
+            )
+
+            await message.answer(
+                f"""✨ Analysis complete! I've processed {len(parsed_messages)} posts from {channel_username}.
+
+Personality Profile:
+- Traits: {', '.join(personality.traits[:3])}
+- Main Interests: {', '.join(personality.interests[:3])}
+
+The complete data has been saved!
+                """
+            )
+        except Exception as e:
+            logger.error(f"Error analyzing messages: {str(e)}", exc_info=True)
+            await message.answer("Sorry! I encountered an issue while analyzing the channel. Please try again later.")
 
     @router.message(Command("start"))
     async def cmd_start(message: types.Message):
@@ -28,7 +68,7 @@ def setup_handlers(
     async def add_channel_finish(message: types.Message, state: FSMContext):
         try:
             channel_username = message.text
-            logging.info(f"Received channel username: {channel_username}")
+            logger.info(f"Received channel username: {channel_username}")
 
             # Format check and conversion
             if channel_username.startswith('https://t.me/'):
@@ -39,7 +79,7 @@ def setup_handlers(
 
             try:
                 channel = await channel_service.get_channel_entity(channel_username)
-                logging.info(f"Channel info retrieved: {channel}")
+                logger.info(f"Channel info retrieved: {channel}")
 
                 # Store channel information
                 stored_channel = channel_storage.add_channel(
@@ -47,29 +87,27 @@ def setup_handlers(
                     username=channel_username[1:],
                     title=channel.title
                 )
-                logging.info(f"Channel stored: {stored_channel}")
+                logger.info(f"Channel stored: {stored_channel}")
 
                 await message.reply(AIPersonality.channel_added(channel_username))
 
                 # Parse channel messages
-                await parse_channel_messages(message, channel_username, parser_service)
+                await parse_channel_messages(message, channel_username)
 
-            except ValueError as ve:
+            except ValueError:
                 await message.reply(
-                    f"Could not find channel {channel_username}.\n"
-                    "Please make sure:\n"
+                    "I couldn't find that channel. Please make sure:\n"
                     "1. The channel exists\n"
                     "2. The channel is public\n"
                     "3. You provided the correct username/link"
                 )
-                logging.error(f"Channel not found: {ve}")
             except Exception as e:
-                await message.reply(f"Error accessing channel: {str(e)}")
-                logging.error(f"Error getting channel info: {e}", exc_info=True)
+                logger.error(f"Error accessing channel: {e}", exc_info=True)
+                await message.reply("Sorry! I couldn't access that channel. Please try again later.")
 
         except Exception as e:
-            logging.error(f"Error adding channel: {str(e)}", exc_info=True)
-            await message.reply(f"Sorry! 😅 I couldn't add that channel. Error: {str(e)}")
+            logger.error(f"Error adding channel: {e}", exc_info=True)
+            await message.reply("Sorry! I couldn't add that channel. Please try again later.")
         finally:
             await state.clear()
 
@@ -138,16 +176,3 @@ def setup_handlers(
             await message.answer(response)
         finally:
             await state.clear()
-
-async def parse_channel_messages(message: types.Message, channel_username: str, parser_service):
-    """Parse and analyze channel messages"""
-    try:
-        parsed_messages = await parser_service.parse_channel(channel_username)
-        await message.answer(
-            f"""✨ Analysis complete! I've processed {len(parsed_messages)} posts from {channel_username}.
-
-The data has been saved and I'm ready to provide insights about your content!
-            """
-        )
-    except Exception as e:
-        await message.answer(f"Oops! 😅 Something went wrong while parsing messages: {str(e)}")
