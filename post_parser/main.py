@@ -6,6 +6,7 @@ from telethon.errors import SessionPasswordNeededError
 import json
 import os
 from datetime import datetime
+from .singletone import MongoDBSingleton
 from .config import load_config
 from .storage import Storage
 from aiogram.fsm.context import FSMContext
@@ -29,6 +30,10 @@ fsm_storage = MemoryStorage()  # FSM storage for dialog states
 bot = Bot(token=config["telegram"]["api_token"])
 # Create dispatcher with FSM storage
 dp = Dispatcher(storage=fsm_storage)
+
+mongo_uri = config["mongo"]["uri"]
+db_name = config["mongo"]["db_name"]
+mongo_singleton = MongoDBSingleton(mongo_uri, db_name)
 
 # Create and configure router
 router = Router(name="main_router")
@@ -107,11 +112,21 @@ class AddChannel(StatesGroup):
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
 	await message.answer(AIPersonality.WELCOME_MESSAGE)
+	try:
+		await mongo_singleton.add_user(str(message.from_user.id), "", [])
+	except Exception as e:
+		logging.error(f"Failed to add user: {e}")
+		await message.answer("Failed to register user.")
 
 @router.message(Command("add_channel"))
 async def add_channel_start(message: types.Message, state: FSMContext):
 	await message.reply("Please provide a channel username starting with @")
 	await state.set_state(AddChannel.waiting_for_channel)
+#	try:
+#		await mongo_singleton.add_channel_to_user(str(message.from_user.id), str(message.text))
+#	except Exception as e:
+#		logging.error(f"Failed to add user: {e}")
+#		await message.answer("Failed to register user.")
 
 @router.message(AddChannel.waiting_for_channel)
 async def add_channel_finish(message: types.Message, state: FSMContext):
