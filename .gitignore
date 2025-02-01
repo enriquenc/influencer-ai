@@ -4,3 +4,7 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 config.json
+.env
+**/data/*
+session_name*
+post_parser/clear_data.sh
