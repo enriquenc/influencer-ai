@@ -113,7 +113,7 @@ class AddChannel(StatesGroup):
 async def cmd_start(message: types.Message):
 	await message.answer(AIPersonality.WELCOME_MESSAGE)
 	try:
-		await mongo_singleton.add_user(str(message.from_user.id), "", [])
+		await mongo_singleton.add_user(str(message.from_user.id), "")
 	except Exception as e:
 		logging.error(f"Failed to add user: {e}")
 		await message.answer("Failed to register user.")
@@ -164,6 +164,9 @@ async def add_channel_finish(message: types.Message, state: FSMContext):
 			await message.reply(f"Error accessing channel: {str(e)}")
 			logging.error(f"Error getting channel info: {e}", exc_info=True)
 
+		# Save user data to MongoDB
+		await mongo_singleton.add_channel(str(message.from_user.id), channel_username)
+
 	except Exception as e:
 		logging.error(f"Error adding channel: {str(e)}", exc_info=True)
 		await message.reply(f"Sorry! 😅 I couldn't add that channel. Error: {str(e)}")
@@ -188,17 +191,21 @@ async def add_wallet(message: types.Message):
 
 @router.message(Command("list_channels"))
 async def list_channels(message: types.Message):
-	channels = channel_storage.get_user_channels(message.from_user.id)
+	channels = await mongo_singleton.get_all_channels(str(message.from_user.id))
+
+	logging.info("Retrieved channels: " + str(channels))
 
 	if not channels:
 		await message.reply("You haven't added any channels yet! Use /add_channel to get started.")
 		return
 
 	response = "Your channels:\n\n"
+
+	logging.info("Channels: " + str(channels))
+
+
 	for channel in channels:
-		response += f"📢 {channel.username}\n"
-		response += f"Added: {channel.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-		response += f"Wallets: {len(channel.wallets)}\n\n"
+		response += f"📢 {channel}\n"
 
 	await message.reply(response)
 
@@ -209,23 +216,23 @@ async def list_wallets(message: types.Message):
 		await message.reply("Please provide a channel username")
 		return
 
-	channel_username = command_parts[1]
-	wallets = channel_storage.get_channel_wallets(channel_username)
+	user_id = str(message.from_user.id)
+	channel_id = command_parts[1].strip()
 
-	# Remove @ if present for display
-	display_name = channel_username[1:] if channel_username.startswith('@') else channel_username
+	try:
+		wallets = await mongo_singleton.get_wallets(user_id, channel_id)
+		if not wallets:
+			await message.reply(f"No wallets found for channel {channel_id}. Ensure you have access to this channel and add wallets with /add_wallet.")
+			return
 
-	if not wallets:
-		await message.reply(f"No wallets found for {display_name}! Add one with /add_wallet {display_name} wallet_address")
-		return
+		response = f"Wallets for channel {channel_id}:\n\n"
+		for wallet in wallets:
+			response += f"📢 {wallet}\n"
 
-	response = f"Wallets for {display_name}:\n\n"
-	for wallet in wallets:
-		response += f"💼 `{wallet.address}`\n"
-		response += f"Chain: {wallet.chain}\n"
-		response += f"Added: {wallet.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-
-	await message.reply(response, parse_mode="Markdown")
+		await message.reply(response)
+	except Exception as e:
+		logging.error(f"Error retrieving wallets: {str(e)}", exc_info=True)
+		await message.reply("Failed to retrieve wallets due to an internal error.")
 
 @router.message(Command("parse"))
 async def parse(message: types.Message):

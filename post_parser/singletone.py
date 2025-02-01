@@ -34,14 +34,23 @@ class MongoDBSingleton(Singleton):
 			self.logger.error(f"Failed to insert message: {e}")
 			raise
 
-	async def add_user(self, user_id, wallet_id, channel_list):
+	async def add_user(self, telegram_id, channel_list):
 		collection = await self.get_collection('users')
+		existing_user = await collection.find_one({"telegram_id": telegram_id})
+		if existing_user:
+			self.logger.info(f"User with telegram_id {telegram_id} already exists.")
+			return None
+
 		user_data = {
-			"telegram_id": user_id,
-			"wallet_id": wallet_id,
+			"telegram_id": telegram_id,
 			"channel_list_ids": channel_list
 		}
-		return await self.insert_message(collection, user_data)
+		try:
+			result = await collection.insert_one(user_data)
+			return result.inserted_id
+		except Exception as e:
+			self.logger.error(f"Failed to add user: {e}")
+			raise
 
 	async def get_all_users(self):
 		collection = await self.get_collection('users')
@@ -54,12 +63,41 @@ class MongoDBSingleton(Singleton):
 			"channel_id": channel_id,
 			"personality": personality
 		}
-		return await self.insert_message(collection, channel_data)
+		try:
+			result = await collection.insert_one(channel_data)
+			return result.inserted_id
+		except Exception as e:
+			self.logger.error(f"Failed to insert channel: {e}")
+			raise
 
-	async def get_all_channels(self):
-		collection = await self.get_collection('channels')
-		cursor = collection.find({})
-		return [document async for document in cursor]
+	async def get_all_channels(self, user_id):
+		user_collection = await self.get_collection('users')
+		try:
+			user = await user_collection.find_one({"telegram_id": user_id})
+			if not user:
+				self.logger.error(f"User with telegram_id {user_id} not found")
+				return []
+
+			return user.get('channel_list_ids', [])
+		except Exception as e:
+			self.logger.error(f"Failed to retrieve channels for user {user_id}: {e}")
+			raise
+
+	async def get_wallets(self, user_id, channel_id):
+		logging.info(f"Getting wallets for user {user_id} and channel {channel_id}")
+		channel_ids = self.get_all_channels(user_id)
+		channel_collection = await self.get_collection('channels')
+		try:
+			if not channel_id in channel_ids:
+				self.logger.error(
+					f"Access denied or user/channel not found for telegram_id: {user_id}, channel_id: {channel_id}")
+				return []
+
+			channel = await channel_collection.find_one({"channel_id": channel_id})
+			return channel.get('wallets', []) if channel else []
+		except Exception as e:
+			self.logger.error(f"Failed to retrieve wallets: {e}")
+			raise
 
 	async def add_channel_to_user(self, telegram_id, new_channel_id):
 		collection = await self.get_collection('users')
