@@ -7,12 +7,14 @@ Hey there! 👋 I'm your AI Influencer Assistant, and I'm here to help you analy
 Here's what I can do for you:
 📊 Parse and analyze your Telegram channel posts
 💼 Track Base wallets associated with your channels
+🤖 Generate AI posts matching your channel's style
 📈 Provide insights about your content
 
 Commands:
 /add_channel - Add a Telegram channel
 /add_wallet - Link a Base wallet to your channel
 /list_channels - Show your channels and wallets
+/generate_post - Create AI-generated posts for your channel
 
 Let's make your social media presence amazing! 🚀
     """

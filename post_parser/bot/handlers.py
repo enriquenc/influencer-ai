@@ -5,6 +5,7 @@ from aiogram.fsm.context import FSMContext
 from telethon.tl.types import Channel
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from telethon.errors import ChatAdminRequiredError, ChannelPrivateError
 
 from ..bot.states import AddChannel, AddWallet
 from ..bot.responses import AIPersonality
@@ -403,6 +404,11 @@ Use /list_channels to see all your channels and wallets"""
             response += f"📢 Channel: @{channel.username}\n"
             response += f"📅 Added: {channel.added_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
 
+            # Add bot permissions info
+            response += "\n🤖 Bot Permissions:\n"
+            permissions_info = await channel_service.get_permissions_info(channel.username)
+            response += f"{permissions_info}\n"
+
             if channel.personality:
                 response += "\n🧠 Personality:\n"
                 response += f"• Traits: {', '.join(channel.personality.traits[:3])}\n"
@@ -538,6 +544,18 @@ Use /list_channels to see all your channels and wallets"""
                 f"✅ Post successfully published to @{callback_data.username}!"
             )
 
+        except ChatAdminRequiredError as e:
+            await query.message.edit_text(
+                f"❌ Cannot post to @{callback_data.username}\n\n"
+                f"{str(e)}\n\n"
+                "Please add the required permissions and try again."
+            )
+        except ChannelPrivateError:
+            await query.message.edit_text(
+                f"❌ Cannot access @{callback_data.username}\n\n"
+                "The channel is private or the bot has no access.\n"
+                "Please make sure the bot is a member of the channel."
+            )
         except Exception as e:
             logger.error(f"Error publishing post: {e}", exc_info=True)
             await query.message.edit_text(

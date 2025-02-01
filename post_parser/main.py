@@ -71,7 +71,10 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 		logger.info("Telethon client connected successfully")
 
 	# Initialize services
-	channel_service = ChannelService(telegram_client)
+	channel_service = ChannelService(
+		client=telegram_client,
+		bot_token=config["telegram"]["api_token"]
+	)
 	parser_service = ParserService(telegram_client, DATA_DIR, config)
 	log_service = LogService(SCRIPT_DIR)
 
@@ -102,7 +105,10 @@ async def main() -> None:
 		# Initialize services
 		logger.info("Initializing services...")
 		await init_telegram_client()
-		channel_service = ChannelService(telegram_client)
+		channel_service = ChannelService(
+			client=telegram_client,
+			bot_token=config["telegram"]["api_token"]
+		)
 		parser_service = ParserService(telegram_client, DATA_DIR, config)
 
 		# Setup handlers
