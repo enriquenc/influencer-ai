@@ -1,5 +1,11 @@
 # Influencer AI Agent 🤖
 
+---
+**NOTE**
+
+made on Ethereum Kyiv Hackathon for 2 days ✨
+---
+
 > An AI-powered Telegram agent that helps crypto influencers maintain an active social media presence while trading on-chain.
 
 ## 🌟 Problem Statement
