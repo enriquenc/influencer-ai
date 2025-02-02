@@ -2,6 +2,13 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from .models import Channel, Wallet, Personality
 
+"""
+Canonical storage implementation for the post parser application.
+Handles in-memory storage of channels, wallets, and personalities.
+
+This is the single source of truth for data storage in the application.
+"""
+
 class Storage:
     """In-memory storage for channels, wallets, and personalities"""
     def __init__(self):
