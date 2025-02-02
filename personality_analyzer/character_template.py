@@ -125,41 +125,26 @@ class CharacterAnalyzer:
             raw_analysis=raw_analysis
         )
 
-    def generate_post(self, personality) -> str:
-        """Generate a post based on channel personality"""
+    def generate_post(self, prompt: str) -> Optional[str]:
+        """Generate a post based on the given prompt"""
         try:
             system_message = """You are a social media content creator. Generate a post that matches the given personality traits,
-            interests, and communication style. The post should be authentic and engaging."""
-
-            user_message = f"""Generate a Telegram post with the following characteristics:
-
-Personality Traits: {', '.join(personality.traits[:3])}
-Main Interests: {', '.join(personality.interests[:3])}
-Communication Style: {personality.communication_style}
-
-Requirements:
-1. Match the communication style exactly
-2. Focus on topics from the main interests
-3. Express the personality traits naturally
-4. Be concise and engaging
-5. Include relevant emojis
-6. Format appropriately for Telegram
-
-Generate a single post:"""
+            interests, and communication style. The post should be authentic, engaging, and include relevant emojis."""
 
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_message},
-                    {"role": "user", "content": user_message}
+                    {"role": "user", "content": prompt}
                 ],
                 temperature=self.temperature,
-                max_tokens=500
+                max_tokens=150
             )
 
-            generated_post = response.choices[0].message.content.strip()
-            return generated_post
+            if response.choices and response.choices[0].message.content:
+                return response.choices[0].message.content.strip()
+            return None
 
         except Exception as e:
-            logger.error(f"Error generating post: {e}")
+            logger.error(f"Error generating post: {e}", exc_info=True)
             raise ValueError("Failed to generate post")

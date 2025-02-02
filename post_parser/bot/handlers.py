@@ -26,6 +26,9 @@ def setup_handlers(
 ) -> None:
     """Setup all bot command handlers"""
 
+    # Get bot instance from wallet service since it's already initialized there
+    bot = wallet_service.bot
+
     async def parse_channel_messages(message: types.Message, channel_username: str):
         """Parse and analyze channel messages"""
         try:
@@ -450,136 +453,154 @@ Please try removing and adding the wallet again."""
         await message.answer(response)
 
     @router.message(Command("generate_post"))
-    async def generate_post_start(message: types.Message):
-        """Start the post generation process by showing channel selection"""
-        channels = channel_storage.get_user_channels(message.from_user.id)
+    async def cmd_generate_post(message: types.Message, state: FSMContext):
+        """Start generate post flow"""
+        user_id = message.from_user.id
+        channels = channel_storage.get_user_channels(user_id)
 
         if not channels:
-            await message.reply(
-                "❌ You haven't added any channels yet!\n"
-                "Use /add_channel to get started."
+            await message.answer(
+                "❌ You don't have any channels yet!\n\n"
+                "Use /add_channel to add your first channel."
             )
             return
 
-        # Create inline keyboard with channels
+        # Create keyboard with channels
         builder = InlineKeyboardBuilder()
         for channel in channels:
             builder.button(
                 text=f"@{channel.username}",
-                callback_data=ChannelAction(
-                    action="generate_post",
-                    username=channel.username
-                ).pack()
+                callback_data=f"generate_post:{channel.username}"
             )
-        builder.adjust(1)  # One button per row
+        builder.adjust(1)
 
-        await message.reply(
-            "🎯 Select a channel to generate a test post:",
+        await message.answer(
+            "Select a channel to generate a post for:",
             reply_markup=builder.as_markup()
         )
 
-    @router.callback_query(ChannelAction.filter(F.action == "generate_post"))
-    async def generate_post_callback(
-        query: types.CallbackQuery,
-        callback_data: ChannelAction
-    ):
+    @router.callback_query(lambda c: c.data.startswith("generate_post:"))
+    async def generate_post_callback(callback_query: types.CallbackQuery, state: FSMContext):
         """Handle channel selection for post generation"""
-        channel_username = callback_data.username
-        channel = channel_storage.get_channel(channel_username)
-
-        if not channel or not channel.personality:
-            await query.message.edit_text(
-                "❌ Channel personality not found. Please analyze the channel first using /add_channel"
-            )
-            return
-
         try:
-            # Use personality_analyzer from closure
-            post = personality_analyzer.generate_post(
-                personality=channel.personality
-            )
+            channel_username = callback_query.data.split(":")[1]
+            channel = channel_storage.get_channel(channel_username)
 
-            # Create approve/regenerate keyboard
-            builder = InlineKeyboardBuilder()
-            builder.button(
-                text="✅ Approve & Post",
-                callback_data=ChannelAction(
-                    action="approve_post",
-                    username=channel_username
-                ).pack()
-            )
-            builder.button(
-                text="🔄 Regenerate",
-                callback_data=ChannelAction(
-                    action="generate_post",
-                    username=channel_username
-                ).pack()
-            )
-            builder.adjust(2)  # Two buttons in one row
+            if not channel or not channel.personality:
+                await callback_query.message.edit_text(
+                    "❌ Channel not found or personality not analyzed.\n"
+                    "Please use /add_channel first."
+                )
+                return
 
-            # Show personality traits used for generation
-            await query.message.edit_text(
-                f"📝 Generated post for @{channel_username}\n"
-                f"Based on:\n"
-                f"• Traits: {', '.join(channel.personality.traits[:3])}\n"
-                f"• Interests: {', '.join(channel.personality.interests[:3])}\n"
-                f"• Style: {channel.personality.communication_style[:100]}...\n\n"
-                f"Generated Post:\n"
-                f"{'─' * 32}\n"
-                f"{post}\n"
-                f"{'─' * 32}\n\n"
-                "What would you like to do?",
-                reply_markup=builder.as_markup()
-            )
+            # Format prompt for post generation
+            prompt = f"""Generate a Telegram post with the following characteristics:
+
+Personality Traits: {', '.join(channel.personality.traits[:3])}
+Main Interests: {', '.join(channel.personality.interests[:3])}
+Communication Style: {channel.personality.communication_style}
+
+Requirements:
+1. Match the communication style exactly
+2. Focus on the main interests
+3. Express the personality traits naturally
+4. Be concise and engaging
+5. Include relevant emojis
+6. Format appropriately for Telegram
+
+Generate a single post:"""
+
+            # Generate post
+            post = personality_analyzer.generate_post(prompt)
+
+            if post:
+                await callback_query.message.edit_text(
+                    f"📝 Generated post for @{channel_username}:\n\n{post}",
+                    reply_markup=wallet_service._create_post_keyboard(channel_username, is_transaction=False)
+                )
+            else:
+                await callback_query.message.edit_text(
+                    "❌ Failed to generate post. Please try again."
+                )
 
         except Exception as e:
             logger.error(f"Error generating post: {e}", exc_info=True)
-            await query.message.edit_text(
-                "❌ Failed to generate post. Please try again later."
+            await callback_query.message.edit_text(
+                "❌ An error occurred while generating the post. Please try again."
             )
 
-    @router.callback_query(ChannelAction.filter(F.action == "approve_post"))
-    async def approve_post_callback(
-        query: types.CallbackQuery,
-        callback_data: ChannelAction
-    ):
-        """Handle post approval and publishing"""
+    @router.callback_query(lambda c: c.data.startswith("regenerate_tx_post:"))
+    async def regenerate_tx_post(callback_query: types.CallbackQuery, state: FSMContext):
+        """Handle regeneration of transaction post"""
         try:
-            # Extract just the post content between the separator lines
-            message_parts = query.message.text.split('─' * 32)
-            if len(message_parts) >= 3:
-                # Get the content between the separator lines
-                post_text = message_parts[1].strip()
-            else:
-                raise ValueError("Could not extract post content")
+            channel_username = callback_query.data.split(":")[1]
 
-            # Use channel_service from closure
-            await channel_service.send_message(
-                channel_username=callback_data.username,
-                message=post_text
+            # Get the transaction event from state
+            data = await state.get_data()
+            tx_event = data.get('current_tx_event')
+
+            if not tx_event:
+                await callback_query.answer("Transaction data not found", show_alert=True)
+                return
+
+            # Generate new post proposal
+            post_proposal = await wallet_service.generate_post_proposal(tx_event, channel_username)
+
+            # Update the message with new proposal
+            await callback_query.message.edit_text(
+                f"📝 Suggested post for @{channel_username}:\n\n{post_proposal}",
+                reply_markup=wallet_service._create_post_keyboard(channel_username)
             )
 
-            await query.message.edit_text(
-                f"✅ Post successfully published to @{callback_data.username}!"
-            )
+            await callback_query.answer("Generated new post proposal!")
 
-        except ChatAdminRequiredError as e:
-            await query.message.edit_text(
-                f"❌ Cannot post to @{callback_data.username}\n\n"
-                f"{str(e)}\n\n"
-                "Please add the required permissions and try again."
-            )
-        except ChannelPrivateError:
-            await query.message.edit_text(
-                f"❌ Cannot access @{callback_data.username}\n\n"
-                "The channel is private or the bot has no access.\n"
-                "Please make sure the bot is a member of the channel."
-            )
         except Exception as e:
-            logger.error(f"Error publishing post: {e}", exc_info=True)
-            await query.message.edit_text(
-                "❌ Failed to publish post. Please try again later."
-            )
+            logger.error(f"Error regenerating transaction post: {e}", exc_info=True)
+            await callback_query.answer("Failed to regenerate post", show_alert=True)
+
+    @router.callback_query(lambda c: c.data.startswith("regenerate_post:"))
+    async def regenerate_post(callback_query: types.CallbackQuery, state: FSMContext):
+        """Handle regeneration of regular post"""
+        try:
+            channel_username = callback_query.data.split(":")[1]
+            channel = channel_storage.get_channel(channel_username)
+
+            if not channel or not channel.personality:
+                await callback_query.answer("Channel not found", show_alert=True)
+                return
+
+            # Format prompt for post generation
+            prompt = f"""Generate a Telegram post with the following characteristics:
+
+Personality Traits: {', '.join(channel.personality.traits[:3])}
+Main Interests: {', '.join(channel.personality.interests[:3])}
+Communication Style: {channel.personality.communication_style}
+
+Requirements:
+1. Match the communication style exactly
+2. Focus on the main interests
+3. Express the personality traits naturally
+4. Be concise and engaging
+5. Include relevant emojis
+6. Format appropriately for Telegram
+
+Generate a single post:"""
+
+            # Generate new post
+            post = personality_analyzer.generate_post(prompt)
+
+            if post:
+                await callback_query.message.edit_text(
+                    f"📝 Generated post for @{channel_username}:\n\n{post}",
+                    reply_markup=wallet_service._create_post_keyboard(channel_username, is_transaction=False)
+                )
+                await callback_query.answer("Generated new post!")
+            else:
+                await callback_query.answer("Failed to generate post", show_alert=True)
+
+        except Exception as e:
+            logger.error(f"Error regenerating post: {e}", exc_info=True)
+            await callback_query.answer("Failed to regenerate post", show_alert=True)
 
     @router.message(Command("help"))
     async def cmd_help(message: types.Message):
@@ -596,3 +617,41 @@ Please try removing and adding the wallet again."""
             "/cancel - Cancel current operation"
         )
         await message.answer(help_text)
+
+    @router.callback_query(lambda c: c.data.startswith("post_to_channel:"))
+    async def post_to_channel(callback_query: types.CallbackQuery, state: FSMContext):
+        """Handle posting to channel"""
+        try:
+            channel_username = callback_query.data.split(":")[1]
+            post_text = callback_query.message.text.split("\n\n", 1)[1]  # Get post content without header
+
+            # Check channel permissions
+            permissions = await channel_service.get_permissions_info(channel_username)
+            if "❌ Can't post messages" in permissions:
+                await callback_query.answer(
+                    "Bot doesn't have permission to post in this channel. "
+                    "Please make sure the bot is an admin with posting rights.",
+                    show_alert=True
+                )
+                return
+
+            # Post to channel
+            try:
+                await bot.send_message(f"@{channel_username}", post_text)
+
+                # Update original message
+                await callback_query.message.edit_text(
+                    f"✅ Posted to @{channel_username}:\n\n{post_text}",
+                    reply_markup=None
+                )
+                await callback_query.answer("Posted to channel!")
+            except Exception as e:
+                logger.error(f"Error sending message to channel: {e}")
+                await callback_query.answer(
+                    "Failed to post to channel. Make sure the bot has admin rights.",
+                    show_alert=True
+                )
+
+        except Exception as e:
+            logger.error(f"Error posting to channel: {e}", exc_info=True)
+            await callback_query.answer("Failed to post to channel", show_alert=True)

@@ -90,8 +90,13 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 	parser_service = ParserService(telegram_client, DATA_DIR, config)
 	log_service = LogService(SCRIPT_DIR)
 
-	# Initialize wallet service with the bot instance and event loop
-	wallet_service = WalletService(bot, storage)
+	# Initialize wallet service with all required dependencies
+	wallet_service = WalletService(
+		bot=bot,
+		storage=storage,
+		personality_analyzer=analyzer,
+		fsm_storage=dp.storage  # Pass the dispatcher's FSM storage
+	)
 	wallet_service._loop = loop  # Ensure the service has access to the main event loop
 
 	# Start the monitor service background thread
