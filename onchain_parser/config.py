@@ -31,10 +31,15 @@ class Config:
                         'ignored_contracts': config['wallet']['ignored_contracts'],
                     },
                     'monitoring': {
-                        'block_delay': config['monitoring']['block_delay'],
-                        'retry_delay': config['monitoring']['retry_delay'],
+                        'block_delay': config.get('monitoring', {}).get('block_delay', 3),  # Default 3 seconds
+                        'retry_delay': config.get('monitoring', {}).get('retry_delay', 6),  # Default 6 seconds
                     },
-                    'debug_mode': config['debug_mode']
+                    'test': {
+                        'wallet_address': config.get('test', {}).get('wallet_address',
+                            "0xf4Aa85656D9350DaE3D8006D8Fb45c33415E6B21"),  # Default address
+                        'output_format': config.get('test', {}).get('output_format', 'brief'),  # 'brief' or 'full'
+                    },
+                    'debug_mode': config.get('debug_mode', False)  # Default False
                 }
         except KeyError as e:
             raise ConfigError(f"Missing required configuration key: {e}")
@@ -72,6 +77,16 @@ class Config:
     def debug_mode(self) -> bool:
         """Get debug mode status"""
         return self._config['debug_mode']
+
+    @property
+    def test_wallet_address(self) -> str:
+        """Get test wallet address"""
+        return self._config['test']['wallet_address']
+
+    @property
+    def test_output_format(self) -> str:
+        """Get test output format"""
+        return self._config['test']['output_format']
 
 # Create global config instance
 config = Config()
