@@ -3,6 +3,7 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.fsm.storage.memory import MemoryStorage
 from telethon.sync import TelegramClient
 import os
+from telethon.sessions import StringSession
 
 from .bot.handlers import setup_handlers
 from .config import load_config
@@ -58,16 +59,20 @@ async def init_telegram_client():
 
 async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 	"""Setup and run the bot with all dependencies"""
-
+	
 	# Initialize Telegram client
 	telegram_client = TelegramClient(
-		'session_name',
+		'session_name',  # Telethon will handle session file creation
 		config["telegram"]["api_id"],
 		config["telegram"]["api_hash"]
 	)
 
+	# Connect and handle authorization if needed
 	if not telegram_client.is_connected():
 		await telegram_client.connect()
+		if not await telegram_client.is_user_authorized():
+			logger.info("No session found. Please log in:")
+			await telegram_client.start()
 		logger.info("Telethon client connected successfully")
 
 	# Initialize services
