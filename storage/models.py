@@ -18,6 +18,17 @@ class Wallet:
         )
 
 @dataclass
+class Personality:
+    name: str
+    traits: List[str]
+    interests: List[str]
+    communication_style: str
+    created_at: datetime
+    updated_at: datetime
+    post_count: int
+    raw_analysis: dict
+
+@dataclass
 class Channel:
     username: str
     title: Optional[str]

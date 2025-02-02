@@ -22,6 +22,7 @@ class MongoDBSingleton(BaseStorage):
         if not hasattr(self, 'db'):
             db_client = motor.motor_asyncio.AsyncIOMotorClient(mongo_uri)
             self.db = db_client[db_name]
+            self.channels = {}
             logging.basicConfig(level=logging.INFO)
             self.logger = logging.getLogger(__name__)
 

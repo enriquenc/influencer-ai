@@ -1,7 +1,6 @@
 from typing import Dict, List, Optional
 from datetime import datetime
 from post_parser.config import load_config
-from personality_analyzer import load_config
 from .models import Channel, Wallet, Personality
 from .mongo import MongoDBSingleton
 from .local_storage import LocalStorage
@@ -27,6 +26,11 @@ class Storage(BaseStorage):
             )
         else:
             self._storage = LocalStorage()
+
+    @property
+    def channels(self):
+        """Access to underlying storage channels"""
+        return self._storage.channels
 
     async def get_channel(self, username: str) -> Optional[Channel]:
         """Get channel by username"""

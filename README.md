@@ -1,12 +1,12 @@
-# Influencer AI Bot 🤖
+# Influencer AI Agent 🤖
 
-> An AI-powered Telegram bot that helps crypto influencers maintain an active social media presence while trading on-chain.
+> An AI-powered Telegram agent that helps crypto influencers maintain an active social media presence while trading on-chain.
 
 ## 🌟 Problem Statement
 Crypto influencers face a challenging dilemma: they need to maintain an active social media presence while simultaneously engaging in time-sensitive trading activities. Our solution bridges this gap by automating personalized content generation based on their on-chain activities.
 
 ## 🎯 Solution
-Influencer AI Bot seamlessly connects wallet activities with AI-powered content generation, creating authentic, personality-driven social media posts that reflect the influencer's trading journey.
+Influencer AI Agent seamlessly connects wallet activities with AI-powered content generation, creating authentic, personality-driven social media posts that reflect the influencer's trading journey.
 
 ## 🔥 Key Features
 - **Wallet Integration**: Simple wallet connection through address input
@@ -35,7 +35,7 @@ Influencer AI Bot seamlessly connects wallet activities with AI-powered content 
 
 ### Phase 3: Expansion (Q3 2025)
 - 🚀 Twitter integration
-- 🚀 Discord bot launch
+- 🚀 Discord agent launch
 - 🚀 AI-powered engagement optimization
 - 🚀 Community features
 
@@ -48,7 +48,7 @@ Influencer AI Bot seamlessly connects wallet activities with AI-powered content 
 ## 👥 Team
 - [@enriquenc](https://github.com/enriquenc) - Backend & Architecture
 - [@skorolevskiy](https://github.com/skorolevskiy) - On-chain Activity Tracking
-- [@aunth](https://github.com/aunth) - Telegram Bot Integration
+- [@aunth](https://github.com/aunth) - Telegram Agent Integration
 - [@OleksandRomaniuk](https://github.com/OleksandRomaniuk) - Database Engineering
 
 ## 📄 License

@@ -5,7 +5,7 @@
         "api_hash": ""
     },
     "max_messages_per_parse": 10,
-    "debug_mode": false,
+    "debug_mode": true,
     "debug_channel": "",
     "openai": {
         "api_key": "your-openai-api-key-here",
@@ -16,5 +16,18 @@
     "mongo": {
         "uri": "test",
         "db_name": "telegram"
+    },
+    "alchemy": {
+        "api_key": "your-api-key",
+        "network": "base",
+        "provider_url": "https://base-mainnet.g.alchemy.com/v2/"
+    },
+    "wallet": {
+        "address": "your-wallet-address",
+        "ignored_contracts": []
+    },
+    "monitoring": {
+        "block_delay": 3,
+        "retry_delay": 6
     }
 }
