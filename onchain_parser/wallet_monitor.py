@@ -119,14 +119,35 @@ def analyze_transaction(transaction, tx_receipt) -> Optional[TransactionEvent]:
                         else:
                             amount = int(amount_hex, 16)
 
+                        # Get token decimals (default to 18 if not available)
+                        token_decimals = 18  # Most ERC20 tokens use 18 decimals
+                        try:
+                            # Create contract instance to get decimals
+                            contract = web3.eth.contract(
+                                address=token_address,
+                                abi=[{
+                                    "constant": True,
+                                    "inputs": [],
+                                    "name": "decimals",
+                                    "outputs": [{"name": "", "type": "uint8"}],
+                                    "type": "function"
+                                }]
+                            )
+                            token_decimals = contract.functions.decimals().call()
+                        except Exception as e:
+                            logger.warning(f"Could not get token decimals, using default 18: {e}")
+
+                        # Convert raw amount to actual amount using decimals
+                        actual_amount = amount / (10 ** token_decimals)
+
                         # Log successful transfer processing
-                        logger.info(f"Processed transfer of {token_info.symbol}: {amount}")
+                        logger.info(f"Processed transfer of {token_info.symbol}: {actual_amount} (raw: {amount}, decimals: {token_decimals})")
 
                         transfers.append(TokenTransfer(
                             token=token_info,
                             from_address=from_addr,
                             to_address=to_addr,
-                            amount=amount,
+                            amount=actual_amount,  # Use the converted amount
                             operation='SELL' if from_addr.lower() == transaction['from'].lower() else 'BUY'
                         ))
                         processed_tokens.add(token_address.lower())

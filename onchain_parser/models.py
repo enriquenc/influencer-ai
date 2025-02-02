@@ -21,10 +21,19 @@ class TokenTransfer:
 
     @property
     def total_value(self) -> Optional[float]:
-        """Calculate total value of transfer in USD"""
-        if self.token.price is not None:
+        """Calculate total value in USD"""
+        if self.token.price:
             return self.amount * self.token.price
         return None
+
+    def format_amount(self) -> str:
+        """Format amount with appropriate precision"""
+        if self.amount >= 1000000:
+            return f"{self.amount:,.0f}"
+        elif self.amount >= 1:
+            return f"{self.amount:,.2f}"
+        else:
+            return f"{self.amount:.8f}"
 
     @property
     def operation_emoji(self) -> str:
@@ -83,31 +92,30 @@ class TransactionEvent:
                     f"└── Liquidity: ${transfer.token.liquidity:,.2f}",
                     f"└── From: {transfer.from_address}",
                     f"└── To: {transfer.to_address}",
-                    f"└── Amount: {transfer.amount}",
+                    f"└── Amount: {transfer.format_amount()}",
                     f"└── Total Value: {total_value_str}",
                 ])
 
         return "\n".join(output)
 
     def format_brief(self) -> str:
-        """Format brief transaction information"""
-        output = [
-            f"Transaction detected at {self.datetime}:",
+        """Format brief transaction info"""
+        result = [
+            f"Transaction detected at {datetime.fromtimestamp(self.timestamp)}:",
             f"Hash: {self.hash}",
             f"From: {self.from_address}",
             f"To: {self.to_address}",
-            f"Value: {self.value} ETH",
-            ""
+            f"Value: {self.value} ETH"
         ]
 
         if self.transfers:
-            for transfer in self.transfers:
-                output.extend([
-                    f"Token: {transfer.token.symbol}",
-                    f"Price: ${transfer.token.price:.4f}",
-                    f"Amount: {transfer.amount}",
-                    f"Operation: {transfer.operation}",
-                    ""
-                ])
+            transfer = self.transfers[0]
+            result.extend([
+                "",
+                f"Token: {transfer.token.symbol}",
+                f"Price: ${transfer.token.price:.4f}",
+                f"Amount: {transfer.format_amount()}",
+                f"Operation: {transfer.operation}"
+            ])
 
-        return "\n".join(output)
+        return "\n".join(result)
