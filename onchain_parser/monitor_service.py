@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from web3 import Web3
 from onchain_parser.config import config
 from onchain_parser.wallet_monitor import analyze_transaction, get_token_info, print_transaction_info
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class WalletSubscription:
@@ -92,121 +95,95 @@ class MonitorService:
     def _monitor_loop(self):
         """Main monitoring loop"""
         last_block = self.web3.eth.block_number - 5
-        print(f"Starting monitoring from block {last_block}")
 
-        while self._running and not self._shutdown_event.is_set():
+        while self._running:
             try:
                 current_block = self.web3.eth.block_number
-                safe_block = current_block - 25
-                chunk_size = 10
+
+                # Increase buffer and process smaller chunks
+                safe_block = current_block - 5  # Reduced confirmation wait
+                chunk_size = 5  # Process smaller chunks
 
                 if safe_block > last_block:
                     start_block = last_block + 1
                     end_block = min(safe_block, start_block + chunk_size)
 
                     for block_num in range(start_block, end_block):
-                        if self._shutdown_event.is_set():  # Check for shutdown
+                        if not self._running:
                             return
 
-                        max_retries = 5
-                        retry_count = 0
-                        block_processed = False
+                        try:
+                            # Get block with retries
+                            block = None
+                            for attempt in range(3):
+                                try:
+                                    block = self.web3.eth.get_block(block_num, full_transactions=True)
+                                    if block:
+                                        break
+                                except Exception as e:
+                                    if attempt == 2:
+                                        logger.error(f"Failed to get block {block_num}: {e}")
+                                        raise
+                                    time.sleep(1)
 
-                        while retry_count < max_retries and not block_processed and not self._shutdown_event.is_set():
-                            try:
-                                # Get block with retries
-                                block = None
-                                for attempt in range(3):
-                                    if self._shutdown_event.is_set():  # Check for shutdown
-                                        return
-                                    try:
-                                        block = self.web3.eth.get_block(block_num, full_transactions=True)
-                                        if block is not None:
-                                            break
-                                    except Exception as e:
-                                        if attempt == 2:
-                                            raise
-                                        time.sleep(1)  # Reduced sleep time
+                            if not block:
+                                continue
 
-                                if block is None:
-                                    raise Exception(f"Failed to fetch block {block_num}")
+                            logger.info(f"Processing block {block_num}")
 
-                                if config.debug_mode:
-                                    print(f"Processing block {block_num}")
+                            # Get active subscriptions
+                            with self._lock:
+                                active_subs = {
+                                    addr: sub for addr, sub in self._subscriptions.items()
+                                    if sub.active
+                                }
 
-                                # Get active subscriptions
-                                with self._lock:
-                                    active_subs = {
-                                        addr: sub for addr, sub in self._subscriptions.items()
-                                        if sub.active
-                                    }
+                            # Process each transaction
+                            for tx in block.transactions:
+                                tx_from = tx['from'].lower()
+                                tx_to = tx['to'].lower() if tx['to'] else None
 
-                                # Process transactions
-                                for tx in block.transactions:
-                                    if self._shutdown_event.is_set():  # Check for shutdown
-                                        return
+                                # Check subscriptions
+                                for wallet_address, subscription in active_subs.items():
+                                    if tx_from == wallet_address or tx_to == wallet_address:
+                                        logger.info(f"Found matching transaction for wallet {wallet_address}: {tx['hash'].hex()}")
 
-                                    tx_from = tx['from'].lower()
-                                    tx_to = tx['to'].lower() if tx['to'] else None
+                                        # Get receipt with retries
+                                        receipt = None
+                                        for attempt in range(3):
+                                            try:
+                                                receipt = self.web3.eth.get_transaction_receipt(tx['hash'])
+                                                if receipt:
+                                                    break
+                                            except Exception as e:
+                                                if attempt == 2:
+                                                    logger.error(f"Failed to get receipt: {e}")
+                                                time.sleep(1)
 
-                                    # Check each subscription
-                                    for wallet_address, subscription in active_subs.items():
-                                        if tx_from == wallet_address or tx_to == wallet_address:
-                                            # Get transaction receipt with retries
-                                            tx_receipt = None
-                                            for attempt in range(5):
-                                                if self._shutdown_event.is_set():  # Check for shutdown
-                                                    return
-                                                try:
-                                                    tx_receipt = self.web3.eth.get_transaction_receipt(tx['hash'].hex())
-                                                    if tx_receipt is not None:
-                                                        break
-                                                except Exception as e:
-                                                    if attempt == 4:
-                                                        raise
-                                                    time.sleep(3 ** attempt)
-
-                                            if tx_receipt is None:
-                                                continue
-
+                                        if receipt:
                                             # Analyze and notify
-                                            tx_event = analyze_transaction(tx, tx_receipt)
+                                            tx_event = analyze_transaction(tx, receipt)
                                             if tx_event:
-                                                print_transaction_info(tx_event)
                                                 try:
+                                                    # Call the callback directly - it's now sync
                                                     subscription.callback(tx_event)
+                                                    logger.info(f"Successfully processed transaction {tx['hash'].hex()}")
                                                 except Exception as e:
-                                                    print(f"Error in callback for {subscription.address}: {e}")
+                                                    logger.error(f"Callback error for {wallet_address}: {e}", exc_info=True)
 
-                                block_processed = True
+                        except Exception as e:
+                            logger.error(f"Error processing block {block_num}: {e}")
+                            continue
 
-                            except Exception as e:
-                                if self._shutdown_event.is_set():  # Check for shutdown
-                                    return
-                                retry_count += 1
-                                if retry_count >= max_retries:
-                                    if config.debug_mode:
-                                        print(f"Failed to process block {block_num} after {max_retries} attempts: {e}")
-                                    break
-                                if config.debug_mode:
-                                    print(f"Error processing block {block_num} (attempt {retry_count}/{max_retries}): {e}")
-                                time.sleep(1)  # Reduced sleep time
+                        last_block = block_num
 
-                        if block_processed or retry_count >= max_retries:
-                            last_block = block_num
+                    time.sleep(0.1)  # Small delay between chunks
 
-                        time.sleep(0.1)  # Reduced delay
-
-                    time.sleep(0.5)  # Reduced delay
+                time.sleep(1)  # Poll interval
 
             except Exception as e:
-                if self._shutdown_event.is_set():  # Check for shutdown
-                    return
-                if config.debug_mode:
-                    print(f"Monitoring error: {e}")
-                time.sleep(1)  # Reduced sleep time
-
-            time.sleep(0.1)  # Reduced main loop delay
+                logger.error(f"Monitor loop error: {e}")
+                time.sleep(1)
 
 # Global monitor service instance
 monitor_service = MonitorService()

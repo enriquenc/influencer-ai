@@ -3,6 +3,8 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.fsm.storage.memory import MemoryStorage
 from telethon.sync import TelegramClient
 import os
+from onchain_parser.monitor_service import monitor_service  # Import the singleton instance
+import asyncio
 
 from .bot.handlers import setup_handlers
 from .config import load_config
@@ -11,6 +13,7 @@ from .services.channel_service import ChannelService
 from .services.parser_service import ParserService
 from personality_analyzer import CharacterAnalyzer
 from .services.log_service import LogService
+from .services.wallet_service import WalletService
 
 # Get the directory where the script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +62,15 @@ async def init_telegram_client():
 async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 	"""Setup and run the bot with all dependencies"""
 
+	# Initialize bot and dispatcher first
+	bot = Bot(token=config["telegram"]["api_token"])
+	dp = Dispatcher(storage=MemoryStorage())
+	router = Router(name="main_router")
+	dp.include_router(router)
+
+	# Get the current event loop
+	loop = asyncio.get_running_loop()
+
 	# Initialize Telegram client
 	telegram_client = TelegramClient(
 		'session_name',
@@ -78,13 +90,24 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 	parser_service = ParserService(telegram_client, DATA_DIR, config)
 	log_service = LogService(SCRIPT_DIR)
 
-	# Initialize bot and dispatcher
-	bot = Bot(token=config["telegram"]["api_token"])
-	dp = Dispatcher(storage=MemoryStorage())
+	# Initialize wallet service with the bot instance and event loop
+	wallet_service = WalletService(bot, storage)
+	wallet_service._loop = loop  # Ensure the service has access to the main event loop
 
-	# Create and include router
-	router = Router(name="main_router")
-	dp.include_router(router)
+	# Start the monitor service background thread
+	logger.info("Starting onchain monitor service...")
+	monitor_service._start_monitor()
+	logger.info("Onchain monitor service started successfully")
+
+	# Restore existing wallet subscriptions from storage
+	logger.info("Restoring wallet subscriptions...")
+	for channel in storage.channels.values():
+		if channel.wallets:
+			for wallet in channel.wallets:
+				if wallet_service.subscribe_wallet(wallet.address):
+					logger.info(f"Restored subscription for wallet {wallet.address}")
+				else:
+					logger.warning(f"Failed to restore subscription for wallet {wallet.address}")
 
 	# Setup handlers with all dependencies
 	setup_handlers(
@@ -94,6 +117,7 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 		parser_service=parser_service,
 		personality_analyzer=analyzer,
 		log_service=log_service,
+		wallet_service=wallet_service,
 		config=config
 	)
 
@@ -102,28 +126,26 @@ async def setup_bot(config: dict, storage, analyzer: CharacterAnalyzer):
 
 async def main() -> None:
 	try:
-		# Initialize services
-		logger.info("Initializing services...")
-		await init_telegram_client()
-		channel_service = ChannelService(
-			client=telegram_client,
-			bot_token=config["telegram"]["api_token"]
-		)
-		parser_service = ParserService(telegram_client, DATA_DIR, config)
+		# Load configurations
+		logger.info("Loading configurations...")
+		telegram_config = load_config()
+		analyzer_config = load_config()
 
-		# Setup handlers
-		logger.info("Setting up command handlers...")
-		setup_handlers(
-			router=router,
-			channel_storage=channel_storage,
-			channel_service=channel_service,
-			parser_service=parser_service
-		)
-		logger.info("Command handlers set up successfully")
+		# Initialize storage
+		logger.info("Initializing storage...")
+		storage = Storage()
 
-		# Start polling
-		logger.info("Starting bot polling...")
-		await dp.start_polling(bot, allowed_updates=["message"])
+		# Initialize personality analyzer
+		logger.info("Initializing personality analyzer...")
+		analyzer = CharacterAnalyzer(
+			api_key=analyzer_config["openai"]["api_key"],
+			model=analyzer_config["openai"]["model"],
+			temperature=analyzer_config["openai"]["temperature"]
+		)
+
+		# Setup and run bot
+		logger.info("Starting bot...")
+		await setup_bot(telegram_config, storage, analyzer)
 
 	except Exception as e:
 		logger.error(f"Error in main: {str(e)}", exc_info=True)
@@ -135,4 +157,6 @@ if __name__ == "__main__":
 		logger.info("Starting Post Parser Bot...")
 		asyncio.run(main())
 	except (KeyboardInterrupt, SystemExit):
+		logger.info("Stopping monitor service...")
+		monitor_service._stop_monitor()
 		logger.info("Bot stopped!")

@@ -6,6 +6,7 @@ import time
 from onchain_parser.config import config
 from onchain_parser.models import TransactionEvent, TokenTransfer, TokenInfo
 from typing import Optional
+import logging
 
 # Connection to Base Mainnet using config
 web3 = Web3(Web3.HTTPProvider(config.provider_url))
@@ -13,6 +14,9 @@ web3 = Web3(Web3.HTTPProvider(config.provider_url))
 # Address to monitor from config
 WALLET_ADDRESS = config.wallet_address
 IGNORED_CONTRACTS = config.ignored_contracts
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 def get_token_info(token_address) -> Optional[TokenInfo]:
     """Get token information from Dexscreener"""
@@ -43,20 +47,39 @@ def get_token_info(token_address) -> Optional[TokenInfo]:
 def analyze_transaction(transaction, tx_receipt) -> Optional[TransactionEvent]:
     """Detailed transaction analysis"""
     try:
+        # Get block with retries
+        block = None
+        for attempt in range(3):
+            try:
+                block = web3.eth.get_block(transaction['blockNumber'])
+                if block is not None:
+                    break
+            except Exception as e:
+                if attempt == 2:
+                    logger.error(f"Failed to get block {transaction['blockNumber']}: {e}")
+                    raise
+                time.sleep(1)
+
+        if block is None:
+            raise Exception(f"Could not fetch block {transaction['blockNumber']}")
+
+        # Log transaction details for debugging
+        logger.info(f"Analyzing transaction: {transaction['hash'].hex()}")
+        logger.info(f"From: {transaction['from']}")
+        logger.info(f"To: {transaction['to']}")
+        logger.info(f"Value: {web3.from_wei(transaction['value'], 'ether')} ETH")
+
         # Calculate gas cost
         gas_cost_wei = tx_receipt['gasUsed'] * transaction['gasPrice']
         gas_cost_eth = web3.from_wei(gas_cost_wei, 'ether')
 
-        # Get block for timestamp
-        block = web3.eth.get_block(transaction['blockNumber'])
-
         # Analyze logs for Transfer events
         transfers = []
-        processed_tokens = set()  # Track processed token addresses
+        processed_tokens = set()
 
         for log in tx_receipt['logs']:
-            if len(log['topics']) == 3:
-                try:
+            try:
+                if len(log['topics']) == 3:  # Standard ERC20 Transfer event
                     token_address = log['address']
 
                     # Skip if already processed
@@ -66,75 +89,73 @@ def analyze_transaction(transaction, tx_receipt) -> Optional[TransactionEvent]:
                     from_addr = '0x' + log['topics'][1].hex()[-40:]
                     to_addr = '0x' + log['topics'][2].hex()[-40:]
 
+                    # Log transfer details for debugging
+                    logger.debug(f"Found transfer: {from_addr} -> {to_addr}")
+
                     # Check if sender or receiver matches transaction sender
                     if from_addr.lower() != transaction['from'].lower() and to_addr.lower() != transaction['from'].lower():
                         continue
 
-                    # Determine operation type
-                    operation_type = 'SELL' if from_addr.lower() == transaction['from'].lower() else 'BUY'
+                    # Get token info with retries
+                    token_info = None
+                    for attempt in range(3):
+                        try:
+                            token_info = get_token_info(token_address)
+                            if token_info:
+                                break
+                        except Exception as e:
+                            if attempt == 2:
+                                logger.error(f"Failed to get token info for {token_address}: {e}")
+                            time.sleep(1)
 
-                    # Get token info
-                    token_info = get_token_info(token_address)
                     if not token_info:
                         continue
 
-                    # Process amount
-                    amount_hex = log['data']
-                    if isinstance(amount_hex, bytes):
-                        amount = int.from_bytes(amount_hex, 'big')
-                    else:
-                        amount = int(amount_hex, 16)
-
-                    # Convert amount to proper format with decimals
+                    # Process amount with better error handling
                     try:
-                        erc20_abi = [
-                            {
-                                "constant": True,
-                                "inputs": [],
-                                "name": "decimals",
-                                "outputs": [{"name": "", "type": "uint8"}],
-                                "type": "function"
-                            }
-                        ]
-                        token_contract = web3.eth.contract(address=token_address, abi=erc20_abi)
-                        decimals = token_contract.functions.decimals().call()
-                        amount = amount / (10 ** decimals)
-                    except:
-                        pass
+                        amount_hex = log['data']
+                        if isinstance(amount_hex, bytes):
+                            amount = int.from_bytes(amount_hex, 'big')
+                        else:
+                            amount = int(amount_hex, 16)
 
-                    transfer = TokenTransfer(
-                        token=token_info,
-                        from_address=from_addr,
-                        to_address=to_addr,
-                        amount=amount,
-                        operation=operation_type
-                    )
-                    transfers.append(transfer)
+                        # Log successful transfer processing
+                        logger.info(f"Processed transfer of {token_info.symbol}: {amount}")
 
-                    # Mark this token as processed
-                    processed_tokens.add(token_address.lower())
+                        transfers.append(TokenTransfer(
+                            token=token_info,
+                            from_address=from_addr,
+                            to_address=to_addr,
+                            amount=amount,
+                            operation='SELL' if from_addr.lower() == transaction['from'].lower() else 'BUY'
+                        ))
+                        processed_tokens.add(token_address.lower())
+                    except Exception as e:
+                        logger.error(f"Error processing transfer amount: {e}")
+                        continue
 
-                except Exception as e:
-                    print(f"Error processing log: {e}")
-                    continue
+            except Exception as e:
+                logger.error(f"Error processing log entry: {e}")
+                continue
 
-        # If no matching transfers, return None
-        if not transfers:
-            return None
-
-        return TransactionEvent(
+        # Create and return transaction event
+        tx_event = TransactionEvent(
             hash=transaction['hash'].hex(),
             block_number=transaction['blockNumber'],
             timestamp=block['timestamp'],
             from_address=transaction['from'],
-            to_address=transaction['to'] if transaction['to'] else '',
+            to_address=transaction['to'],
             value=web3.from_wei(transaction['value'], 'ether'),
             status='Success' if tx_receipt['status'] == 1 else 'Failed',
             transfers=transfers
         )
 
+        # Log successful analysis
+        logger.info(f"Successfully analyzed transaction {tx_event.hash}")
+        return tx_event
+
     except Exception as e:
-        print(f"Error analyzing transaction: {e}")
+        logger.error(f"Error analyzing transaction {transaction['hash'].hex()}: {e}", exc_info=True)
         return None
 
 def print_transaction_info(tx_event: TransactionEvent):

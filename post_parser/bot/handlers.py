@@ -10,6 +10,7 @@ from telethon.errors import ChatAdminRequiredError, ChannelPrivateError
 from ..bot.states import AddChannel, AddWallet
 from ..bot.responses import AIPersonality
 from ..bot.callbacks import ChannelAction
+from ..services.wallet_service import WalletService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ def setup_handlers(
     parser_service,
     personality_analyzer,
     log_service,
+    wallet_service: WalletService,
     config: dict
 ) -> None:
     """Setup all bot command handlers"""
@@ -347,7 +349,7 @@ Use /add_wallet to link a wallet to this channel
             channel_username = state_data.get('selected_channel')
             wallet_address = message.text.strip()
 
-            # Basic wallet address validation for Base (Ethereum format)
+            # Basic wallet address validation
             if not wallet_address.startswith('0x') or len(wallet_address) != 42:
                 await message.reply(
                     "❌ Invalid Base wallet address!\n\n"
@@ -355,17 +357,29 @@ Use /add_wallet to link a wallet to this channel
                 )
                 return
 
-            # Add wallet to storage with Base chain
+            # Add wallet to storage
             wallet = channel_storage.add_wallet(channel_username, wallet_address, chain="Base")
             if wallet:
-                await message.reply(
-                    f"""✅ Wallet successfully added!
+                # Subscribe to wallet updates
+                if wallet_service.subscribe_wallet(wallet_address):
+                    await message.reply(
+                        f"""✅ Wallet successfully added and monitoring started!
 
 📢 Channel: @{channel_username}
 💼 Base Wallet: `{wallet_address}`
 
+You will receive notifications for all transactions.
 Use /list_channels to see all your channels and wallets"""
-                )
+                    )
+                else:
+                    await message.reply(
+                        f"""⚠️ Wallet added but monitoring failed to start.
+
+📢 Channel: @{channel_username}
+💼 Base Wallet: `{wallet_address}`
+
+Please try removing and adding the wallet again."""
+                    )
             else:
                 await message.reply(
                     "❌ Failed to add wallet!\n\n"
