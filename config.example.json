@@ -12,5 +12,9 @@
         "model": "gpt-3.5-turbo",
         "temperature": 0.7
     },
-    "max_posts_per_batch": 10
+    "max_posts_per_batch": 10,
+    "mongo": {
+        "uri": "test",
+        "db_name": "telegram"
+    }
 }
