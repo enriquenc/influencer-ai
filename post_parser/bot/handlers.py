@@ -33,7 +33,7 @@ def setup_handlers(
             personality = personality_analyzer.analyze_posts(parsed_messages)
 
             # Update storage with personality
-            channel_storage.update_channel_personality(channel_username, personality)
+            await channel_storage.update_channel_personality(channel_username, personality)
 
             # Save personality to logs
             log_service.save_personality(channel_username, personality)
@@ -74,7 +74,7 @@ The complete data has been saved!
                 )
 
                 # Add default debug channel
-                stored_channel = channel_storage.add_channel(
+                stored_channel = await channel_storage.add_channel(
                     user_id=message.from_user.id,
                     username=debug_channel,
                     title=f"{debug_channel} [Debug Channel]"
@@ -100,7 +100,7 @@ The complete data has been saved!
                 personality = personality_analyzer.analyze_posts(parsed_messages)
 
                 # Update storage with personality
-                channel_storage.update_channel_personality(debug_channel, personality)
+                await channel_storage.update_channel_personality(debug_channel, personality)
 
                 # Save personality to logs
                 log_service.save_personality(debug_channel, personality)
@@ -176,7 +176,7 @@ The complete data has been saved!
                 )
 
                 # Store channel information
-                stored_channel = channel_storage.add_channel(
+                stored_channel = await channel_storage.add_channel(
                     user_id=message.from_user.id,
                     username=channel_username[1:],
                     title=channel.title
@@ -207,7 +207,7 @@ The complete data has been saved!
                 personality = personality_analyzer.analyze_posts(parsed_messages)
 
                 # Update storage with personality
-                channel_storage.update_channel_personality(channel_username, personality)
+                await channel_storage.update_channel_personality(channel_username, personality)
 
                 # Save personality to logs
                 log_service.save_personality(channel_username, personality)
@@ -266,7 +266,7 @@ Use /add_wallet to link a wallet to this channel
     @router.message(Command("add_wallet"))
     async def add_wallet(message: types.Message, state: FSMContext):
         # Get user's channels first
-        channels = channel_storage.get_user_channels(message.from_user.id)
+        channels = await channel_storage.get_user_channels(message.from_user.id)
         logger.info(f"Retrieved channels for user {message.from_user.id}: {channels}")
 
         if not channels:
@@ -356,7 +356,7 @@ Use /add_wallet to link a wallet to this channel
                 return
 
             # Add wallet to storage with Base chain
-            wallet = channel_storage.add_wallet(channel_username, wallet_address, chain="Base")
+            wallet = await channel_storage.add_wallet(channel_username, wallet_address, chain="Base")
             if wallet:
                 await message.reply(
                     f"""✅ Wallet successfully added!
@@ -390,7 +390,7 @@ Use /list_channels to see all your channels and wallets"""
 
     @router.message(Command("list_channels"))
     async def list_channels(message: types.Message):
-        channels = channel_storage.get_user_channels(message.from_user.id)
+        channels = await channel_storage.get_user_channels(message.from_user.id)
 
         if not channels:
             await message.reply(
@@ -438,7 +438,7 @@ Use /list_channels to see all your channels and wallets"""
     @router.message(Command("generate_post"))
     async def generate_post_start(message: types.Message):
         """Start the post generation process by showing channel selection"""
-        channels = channel_storage.get_user_channels(message.from_user.id)
+        channels = await channel_storage.get_user_channels(message.from_user.id)
 
         if not channels:
             await message.reply(
@@ -471,7 +471,7 @@ Use /list_channels to see all your channels and wallets"""
     ):
         """Handle channel selection for post generation"""
         channel_username = callback_data.username
-        channel = channel_storage.get_channel(channel_username)
+        channel = await channel_storage.get_channel(channel_username)
 
         if not channel or not channel.personality:
             await query.message.edit_text(
