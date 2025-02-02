@@ -18,11 +18,11 @@ def get_token_info(token_address):
         # Check for WETH address
         if token_address.lower() == '0x0a2854Fbbd9B3Ef66F17d47284E7f899b9509330'.lower():
             token_address = '0x4200000000000000000000000000000000000006'  # Base WETH
-            
+
         url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
         response = requests.get(url)
         data = response.json()
-        
+
         if data.get('pairs'):
             pair = data['pairs'][0]  # Get first pair as main
             return {
@@ -44,41 +44,47 @@ def analyze_transaction(transaction, tx_receipt):
         # Calculate gas cost
         gas_cost_wei = tx_receipt['gasUsed'] * transaction['gasPrice']
         gas_cost_eth = web3.from_wei(gas_cost_wei, 'ether')
-        
+
         # Get block for timestamp
         block = web3.eth.get_block(transaction['blockNumber'])
-        
+
         # Analyze logs for Transfer events
         transfers = []
+        processed_tokens = set()  # Track processed token addresses
+
         for log in tx_receipt['logs']:
             if len(log['topics']) == 3:
                 try:
                     token_address = log['address']
-                        
+
                     from_addr = '0x' + log['topics'][1].hex()[-40:]
                     to_addr = '0x' + log['topics'][2].hex()[-40:]
-                    
+
                     # Check if sender or receiver matches transaction sender
                     if from_addr.lower() != transaction['from'].lower() and to_addr.lower() != transaction['from'].lower():
                         continue
-                    
+
+                    # Skip if we already processed this token
+                    if token_address.lower() in processed_tokens:
+                        continue
+
                     # Determine operation type (buy/sell)
                     operation_type = 'SELL' if from_addr.lower() == transaction['from'].lower() else 'BUY'
-                    
+
                     # Get token info and price
                     token_info = get_token_info(token_address)
-                    
+
                     # Skip tokens without price on Dexscreener
-                    if token_info['price'] is None:
+                    if not token_info or token_info.get('price') is None:
                         continue
-                    
+
                     # Proper amount decoding
                     amount_hex = log['data']
                     if isinstance(amount_hex, bytes):
                         amount = int.from_bytes(amount_hex, 'big')
                     else:
                         amount = int(amount_hex, 16)
-                    
+
                     # Convert amount to proper format with decimals
                     try:
                         erc20_abi = [
@@ -96,7 +102,7 @@ def analyze_transaction(transaction, tx_receipt):
                     except:
                         # If failed to get decimals, leave as is
                         pass
-                    
+
                     transfers.append({
                         'token': token_info,
                         'from': from_addr,
@@ -104,14 +110,18 @@ def analyze_transaction(transaction, tx_receipt):
                         'amount': amount,
                         'operation': operation_type
                     })
+
+                    # Mark this token as processed
+                    processed_tokens.add(token_address.lower())
+
                 except Exception as e:
                     print(f"Error processing log: {e}")
                     continue
-        
+
         # If no matching transfers, return None
         if not transfers:
             return None
-            
+
         return {
             'hash': transaction['hash'].hex(),
             'block_number': transaction['blockNumber'],
@@ -145,19 +155,19 @@ Value: {tx_info['value']} ETH
     if tx_info['transfers']:
         print("Token Information:")
         print("══════════════════════")
-        
+
         for transfer in tx_info['transfers']:
             token = transfer['token']
             amount = transfer['amount']
             operation = transfer['operation']
-            
+
             # Calculate total token value
             total_value = amount * token['price'] if token['price'] else None
             total_value_str = f"${total_value:.2f}" if total_value is not None else "No data"
-            
+
             # Add operation emoji
             operation_emoji = "🔴" if operation == "SELL" else "🟢"
-            
+
             print(f"""
 {operation_emoji} Operation: {operation}
 Token: {token['symbol']} ({token['address']})
@@ -179,31 +189,52 @@ def monitor_transactions():
     while True:
         try:
             current_block = web3.eth.block_number
-            if current_block > last_block:
-                for block_num in range(last_block + 1, current_block + 1):
-                    try:
-                        block = web3.eth.get_block(block_num, full_transactions=True)
-                        print(f"Checking block {block_num}")
+            # Add confirmation buffer to avoid reorgs
+            safe_block = current_block - 5  # Wait for 5 block confirmations
 
-                        for tx in block.transactions:
-                            if tx['from'].lower() == WALLET_ADDRESS.lower() or \
-                               (tx['to'] and tx['to'].lower() == WALLET_ADDRESS.lower()):
-                                tx_receipt = web3.eth.get_transaction_receipt(tx['hash'].hex())
-                                tx_info = analyze_transaction(tx, tx_receipt)
-                                if tx_info:
-                                    print_transaction_info(tx_info)
+            if safe_block > last_block:
+                for block_num in range(last_block + 1, safe_block + 1):
+                    max_retries = 3
+                    retry_count = 0
 
-                        # Update last_block only after successful processing
-                        last_block = block_num
+                    while retry_count < max_retries:
+                        try:
+                            block = web3.eth.get_block(block_num, full_transactions=True)
+                            print(f"Checking block {block_num}")
 
-                        # Add delay between block requests to prevent rate limiting
-                        time.sleep(config.block_delay)
+                            for tx in block.transactions:
+                                try:
+                                    if tx['from'].lower() == WALLET_ADDRESS.lower() or \
+                                       (tx['to'] and tx['to'].lower() == WALLET_ADDRESS.lower()):
+                                        tx_receipt = web3.eth.get_transaction_receipt(tx['hash'].hex())
+                                        if tx_receipt is None:
+                                            print(f"Transaction receipt not found for {tx['hash'].hex()}, retrying...")
+                                            time.sleep(1)
+                                            continue
 
-                    except Exception as e:
-                        print(f"Error processing block {block_num}: {e}")
-                        # Don't update last_block if block not found
-                        # This ensures we'll try this block again
-                        break  # Exit the loop to retry from this block
+                                        tx_info = analyze_transaction(tx, tx_receipt)
+                                        if tx_info:
+                                            print_transaction_info(tx_info)
+                                except Exception as e:
+                                    print(f"Error processing transaction: {e}")
+                                    continue
+
+                            # Successfully processed block, break retry loop
+                            break
+
+                        except Exception as e:
+                            retry_count += 1
+                            if retry_count >= max_retries:
+                                print(f"Failed to process block {block_num} after {max_retries} attempts: {e}")
+                                break
+                            print(f"Error processing block {block_num} (attempt {retry_count}/{max_retries}): {e}")
+                            time.sleep(2 ** retry_count)  # Exponential backoff
+
+                    # Update last_block only after successful processing or max retries exceeded
+                    last_block = block_num
+
+                    # Add delay between block requests to prevent rate limiting
+                    time.sleep(config.block_delay)
 
         except Exception as e:
             print(f"Monitoring error: {e}")
